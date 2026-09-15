@@ -16,9 +16,18 @@ if (!process.env.JWT_SECRET) {
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+const normalizeCorsOrigin = (origin) => {
+  if (!origin || origin === '*') return '*';
+  try {
+    return new URL(origin).origin;
+  } catch {
+    return '*';
+  }
+};
+
 // Middleware
 app.use(cors({
-  origin: process.env.FRONTEND_URL || '*',
+  origin: normalizeCorsOrigin(process.env.FRONTEND_URL),
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
