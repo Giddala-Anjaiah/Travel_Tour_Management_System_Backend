@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: travel-tour-backend
+    region: oregon
+    plan: free
+    runtime: nodejs
+    buildCommand: cd backend && npm install
+    startCommand: cd backend && npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Set these in the Render dashboard (or leave sync:false to be prompted)
+      - key: MONGODB_URI
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
