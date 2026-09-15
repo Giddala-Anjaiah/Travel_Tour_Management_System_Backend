@@ -12,7 +12,11 @@ services:
       # Set these in the Render dashboard (or leave sync:false to be prompted)
       - key: MONGODB_URI
         sync: false
+      # MONGODB_URI and JWT_SECRET are secrets -> set them as Secret env vars
+      # in the Render dashboard. The app falls back to an ephemeral JWT_SECRET
+      # at runtime if unset, but sessions will reset on every restart.
       - key: JWT_SECRET
         sync: false
+      # Non-secret: your public Vercel frontend origin (sets CORS precisely).
       - key: FRONTEND_URL
-        sync: false
+        value: https://travel-tour-management-system-front.vercel.app
