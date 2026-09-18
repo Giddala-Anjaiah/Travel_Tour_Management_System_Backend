@@ -946,28 +946,23 @@ const otpStore = new Map();
 
 // Helper: send email via Brevo SMTP relay
 async function sendEmailViaBrevo(to, subject, htmlContent) {
-  const brevoKey = process.env.BREVO_API_KEY;
-  if (!brevoKey) {
-    throw new Error('BREVO_API_KEY not configured');
+  const smtpUser = process.env.BREVO_SMTP_USER || 'b9e61a001@smtp-brevo.com';
+  const smtpKey = process.env.BREVO_SMTP_KEY || process.env.BREVO_API_KEY;
+  if (!smtpKey) {
+    throw new Error('BREVO_SMTP_KEY or BREVO_API_KEY not configured');
   }
   const senderEmail = process.env.BREVO_SENDER_EMAIL || 'no-reply@traveltour.com';
   const senderName = process.env.BREVO_SENDER_NAME || 'Travel Tour';
-  const smtpUser = process.env.BREVO_SMTP_USER || 'b9e61a001@smtp-brevo.com';
 
-  let transporter;
-  try {
-    transporter = nodemailer.createTransport({
-      host: 'smtp-relay.brevo.com',
-      port: 587,
-      secure: false,
-      auth: {
-        user: smtpUser,
-        pass: brevoKey,
-      },
-    });
-  } catch (err) {
-    throw new Error('SMTP transport creation failed: ' + err.message);
-  }
+  const transporter = nodemailer.createTransport({
+    host: 'smtp-relay.brevo.com',
+    port: 587,
+    secure: false,
+    auth: {
+      user: smtpUser,
+      pass: smtpKey,
+    },
+  });
 
   const info = await transporter.sendMail({
     from: `"${senderName}" <${senderEmail}>`,
@@ -992,9 +987,9 @@ app.post('/api/forgot-password', async (req, res) => {
     otpStore.set(email, { otp, expiresAt: Date.now() + 5 * 60 * 1000 });
 
     const html = `<p>Your Travel Tour password reset OTP is <strong>${otp}</strong>. It expires in 5 minutes.</p>`;
-    const brevoKey = process.env.BREVO_API_KEY;
+    const smtpKey = process.env.BREVO_SMTP_KEY || process.env.BREVO_API_KEY;
     let emailOk = false;
-    if (brevoKey) {
+    if (smtpKey) {
       try {
         await sendEmailViaBrevo(user.email, 'Password Reset OTP', html);
         emailOk = true;
@@ -1002,7 +997,7 @@ app.post('/api/forgot-password', async (req, res) => {
         console.error('Email send error:', emailErr.message);
       }
     } else {
-      console.error('[WARN] BREVO_API_KEY is not set — OTP is: ' + otp);
+      console.error('[WARN] BREVO_SMTP_KEY not set — OTP is: ' + otp);
     }
 
     console.log(`[FORGOT PASSWORD] OTP for ${email}: ${otp}`);
