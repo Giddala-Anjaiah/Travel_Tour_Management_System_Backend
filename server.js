@@ -5,6 +5,7 @@ import dotenv from 'dotenv';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
+import nodemailer from 'nodemailer';
 
 dotenv.config();
 
@@ -943,7 +944,7 @@ app.post('/api/login', async (req, res) => {
 // In-memory OTP store (email → { otp, expiresAt })
 const otpStore = new Map();
 
-// Helper: send email via Brevo SMTP API
+// Helper: send email via Brevo SMTP relay
 async function sendEmailViaBrevo(to, subject, htmlContent) {
   const brevoKey = process.env.BREVO_API_KEY;
   if (!brevoKey) {
@@ -951,24 +952,31 @@ async function sendEmailViaBrevo(to, subject, htmlContent) {
   }
   const senderEmail = process.env.BREVO_SENDER_EMAIL || 'no-reply@traveltour.com';
   const senderName = process.env.BREVO_SENDER_NAME || 'Travel Tour';
-  const resp = await fetch('https://api.brevo.com/v3/smtp/email', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'api-key': brevoKey,
-    },
-    body: JSON.stringify({
-      sender: { email: senderEmail, name: senderName },
-      to: [{ email: to }],
-      subject,
-      htmlContent,
-    }),
-  });
-  if (!resp.ok) {
-    const txt = await resp.text();
-    throw new Error(`Brevo API error ${resp.status}: ${txt}`);
+  const smtpUser = process.env.BREVO_SMTP_USER || 'b9e61a001@smtp-brevo.com';
+
+  let transporter;
+  try {
+    transporter = nodemailer.createTransport({
+      host: 'smtp-relay.brevo.com',
+      port: 587,
+      secure: false,
+      auth: {
+        user: smtpUser,
+        pass: brevoKey,
+      },
+    });
+  } catch (err) {
+    throw new Error('SMTP transport creation failed: ' + err.message);
   }
-  return resp.json();
+
+  const info = await transporter.sendMail({
+    from: `"${senderName}" <${senderEmail}>`,
+    to: to,
+    subject: subject,
+    html: htmlContent,
+  });
+
+  return { messageId: info.messageId };
 }
 
 // Forgot Password Route — sends OTP to user email
