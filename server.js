@@ -988,6 +988,7 @@ app.post('/api/forgot-password', async (req, res) => {
       console.error('Email send error:', emailErr.message);
     }
 
+    console.log(`[FORGOT PASSWORD] OTP for ${email}: ${otp}`);
     res.status(200).json({ message: 'OTP sent to your email' });
   } catch (error) {
     console.error('Forgot password error:', error);
