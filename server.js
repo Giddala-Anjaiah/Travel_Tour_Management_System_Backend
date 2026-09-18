@@ -943,16 +943,16 @@ app.post('/api/login', async (req, res) => {
 // In-memory OTP store (email → { otp, expiresAt })
 const otpStore = new Map();
 
-// Helper: send email via Brevo API (REST) or SMTP relay
+// Helper: send email via Brevo (REST API or SMTP)
+// NOTE: If BREVO_API_KEY is invalid/not set, this throws and OTP is returned in response for testing
 async function sendEmailViaBrevo(to, subject, htmlContent) {
   const brevoKey = process.env.BREVO_API_KEY;
   if (!brevoKey) {
     throw new Error('BREVO_API_KEY not configured');
   }
-  const senderEmail = process.env.BREVO_SENDER_EMAIL || 'no-reply@traveltour.com';
-  const senderName = process.env.BREVO_SENDER_NAME || 'Travel Tour';
+  const senderEmail = process.env.BREVO_SENDER_EMAIL || 'anjaiahgiddala@gmail.com';
+  const senderName = process.env.BREVO_SENDER_NAME || 'Teja.com';
 
-  // Try Brevo REST API first (fast fail with 401 if key invalid)
   const resp = await fetch('https://api.brevo.com/v3/smtp/email', {
     method: 'POST',
     headers: {
