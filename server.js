@@ -962,6 +962,8 @@ async function sendEmailViaBrevo(to, subject, htmlContent) {
       user: smtpUser,
       pass: smtpKey,
     },
+    connectionTimeout: 5000,
+    greetingTimeout: 5000,
   });
 
   const info = await transporter.sendMail({
@@ -972,7 +974,7 @@ async function sendEmailViaBrevo(to, subject, htmlContent) {
   });
 
   return { messageId: info.messageId };
-}
+ }
 
 // Forgot Password Route — sends OTP to user email
 app.post('/api/forgot-password', async (req, res) => {
