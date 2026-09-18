@@ -20,3 +20,6 @@ services:
       # Non-secret: your public Vercel frontend origin (sets CORS precisely).
       - key: FRONTEND_URL
         value: https://travel-tour-management-system-front.vercel.app
+      # Set in Render dashboard as Secret env var
+      - key: BREVO_API_KEY
+        sync: false
