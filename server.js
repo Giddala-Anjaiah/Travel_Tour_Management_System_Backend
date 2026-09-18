@@ -966,15 +966,24 @@ async function sendEmailViaBrevo(to, subject, htmlContent) {
     greetingTimeout: 5000,
   });
 
-  const info = await transporter.sendMail({
-    from: `"${senderName}" <${senderEmail}>`,
-    to: to,
-    subject: subject,
-    html: htmlContent,
-  });
-
-  return { messageId: info.messageId };
- }
+  let timer;
+  try {
+    const info = await Promise.race([
+      transporter.sendMail({
+        from: `"${senderName}" <${senderEmail}>`,
+        to: to,
+        subject: subject,
+        html: htmlContent,
+      }),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error('SMTP send timeout after 5s')), 5000);
+      }),
+    ]);
+    return { messageId: info.messageId };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 // Forgot Password Route — sends OTP to user email
 app.post('/api/forgot-password', async (req, res) => {
