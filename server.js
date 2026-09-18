@@ -940,6 +940,114 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
+// In-memory OTP store (email → { otp, expiresAt })
+const otpStore = new Map();
+
+// Helper: send email via Brevo SMTP API
+async function sendEmailViaBrevo(to, subject, htmlContent) {
+  const brevoKey = process.env.BREVO_API_KEY;
+  if (!brevoKey) {
+    throw new Error('BREVO_API_KEY not configured');
+  }
+  const resp = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'api-key': brevoKey,
+    },
+    body: JSON.stringify({
+      sender: { email: 'no-reply@traveltour.com', name: 'Travel Tour' },
+      to: [{ email: to }],
+      subject,
+      htmlContent,
+    }),
+  });
+  if (!resp.ok) {
+    const txt = await resp.text();
+    throw new Error(`Brevo API error ${resp.status}: ${txt}`);
+  }
+  return resp.json();
+}
+
+// Forgot Password Route — sends OTP to user email
+app.post('/api/forgot-password', async (req, res) => {
+  try {
+    const { email } = req.body;
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(404).json({ message: 'User not found with this email' });
+    }
+
+    const otp = crypto.randomInt(100000, 999999).toString();
+    otpStore.set(email, { otp, expiresAt: Date.now() + 5 * 60 * 1000 });
+
+    const html = `<p>Your Travel Tour password reset OTP is <strong>${otp}</strong>. It expires in 5 minutes.</p>`;
+    try {
+      await sendEmailViaBrevo(user.email, 'Password Reset OTP', html);
+    } catch (emailErr) {
+      console.error('Email send error:', emailErr.message);
+    }
+
+    res.status(200).json({ message: 'OTP sent to your email' });
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    res.status(500).json({ message: 'Server error during password reset request' });
+  }
+});
+
+// Verify OTP Route
+app.post('/api/verify-otp', (req, res) => {
+  try {
+    const { email, otp } = req.body;
+    const record = otpStore.get(email);
+    if (!record) {
+      return res.status(400).json({ message: 'OTP not found or expired. Request a new one.' });
+    }
+    if (record.expiresAt < Date.now()) {
+      otpStore.delete(email);
+      return res.status(400).json({ message: 'OTP expired. Request a new one.' });
+    }
+    if (record.otp !== otp) {
+      return res.status(400).json({ message: 'Invalid OTP' });
+    }
+    res.status(200).json({ message: 'OTP verified successfully' });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error during OTP verification' });
+  }
+});
+
+// Reset Password Route
+app.post('/api/reset-password', async (req, res) => {
+  try {
+    const { email, otp, newPassword } = req.body;
+    const record = otpStore.get(email);
+    if (!record) {
+      return res.status(400).json({ message: 'OTP not found or expired. Request a new one.' });
+    }
+    if (record.expiresAt < Date.now()) {
+      otpStore.delete(email);
+      return res.status(400).json({ message: 'OTP expired. Request a new one.' });
+    }
+    if (record.otp !== otp) {
+      return res.status(400).json({ message: 'Invalid OTP' });
+    }
+
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    user.password = await bcrypt.hash(newPassword, 10);
+    await user.save();
+    otpStore.delete(email);
+
+    res.status(200).json({ message: 'Password reset successfully' });
+  } catch (error) {
+    console.error('Reset password error:', error);
+    res.status(500).json({ message: 'Server error during password reset' });
+  }
+});
+
 // Get All Users Route (for debugging)
 app.get('/api/users', async (req, res) => {
   try {
