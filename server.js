@@ -949,6 +949,8 @@ async function sendEmailViaBrevo(to, subject, htmlContent) {
   if (!brevoKey) {
     throw new Error('BREVO_API_KEY not configured');
   }
+  const senderEmail = process.env.BREVO_SENDER_EMAIL || 'no-reply@traveltour.com';
+  const senderName = process.env.BREVO_SENDER_NAME || 'Travel Tour';
   const resp = await fetch('https://api.brevo.com/v3/smtp/email', {
     method: 'POST',
     headers: {
@@ -956,7 +958,7 @@ async function sendEmailViaBrevo(to, subject, htmlContent) {
       'api-key': brevoKey,
     },
     body: JSON.stringify({
-      sender: { email: 'no-reply@traveltour.com', name: 'Travel Tour' },
+      sender: { email: senderEmail, name: senderName },
       to: [{ email: to }],
       subject,
       htmlContent,
@@ -982,13 +984,25 @@ app.post('/api/forgot-password', async (req, res) => {
     otpStore.set(email, { otp, expiresAt: Date.now() + 5 * 60 * 1000 });
 
     const html = `<p>Your Travel Tour password reset OTP is <strong>${otp}</strong>. It expires in 5 minutes.</p>`;
-    try {
-      await sendEmailViaBrevo(user.email, 'Password Reset OTP', html);
-    } catch (emailErr) {
-      console.error('Email send error:', emailErr.message);
+    const brevoKey = process.env.BREVO_API_KEY;
+    let emailOk = false;
+    if (brevoKey) {
+      try {
+        await sendEmailViaBrevo(user.email, 'Password Reset OTP', html);
+        emailOk = true;
+      } catch (emailErr) {
+        console.error('Email send error:', emailErr.message);
+      }
+    } else {
+      console.error('[WARN] BREVO_API_KEY is not set in environment');
     }
 
     console.log(`[FORGOT PASSWORD] OTP for ${email}: ${otp}`);
+    if (!emailOk) {
+      return res.status(500).json({
+        message: 'Failed to send OTP email. Please contact support. OTP (check server logs): ' + otp,
+      });
+    }
     res.status(200).json({ message: 'OTP sent to your email' });
   } catch (error) {
     console.error('Forgot password error:', error);
