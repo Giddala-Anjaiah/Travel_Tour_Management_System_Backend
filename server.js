@@ -1008,7 +1008,7 @@ app.post('/api/forgot-password', async (req, res) => {
     console.log(`[FORGOT PASSWORD] OTP for ${email}: ${otp}`);
     if (!emailOk) {
       return res.status(200).json({
-        message: 'OTP generated. Brevo not configured on server — use this test OTP: ' + otp,
+        message: 'OTP generated. Email not sent (Brevo misconfigured) — use this test OTP: ' + otp,
       });
     }
     res.status(200).json({ message: 'OTP sent to your email' });
