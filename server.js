@@ -5,7 +5,6 @@ import dotenv from 'dotenv';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
-import nodemailer from 'nodemailer';
 
 dotenv.config();
 
@@ -944,45 +943,34 @@ app.post('/api/login', async (req, res) => {
 // In-memory OTP store (email → { otp, expiresAt })
 const otpStore = new Map();
 
-// Helper: send email via Brevo SMTP relay
+// Helper: send email via Brevo API (REST) or SMTP relay
 async function sendEmailViaBrevo(to, subject, htmlContent) {
-  const smtpUser = process.env.BREVO_SMTP_USER || 'b9e61a001@smtp-brevo.com';
-  const smtpKey = process.env.BREVO_SMTP_KEY || process.env.BREVO_API_KEY;
-  if (!smtpKey) {
-    throw new Error('BREVO_SMTP_KEY or BREVO_API_KEY not configured');
+  const brevoKey = process.env.BREVO_API_KEY;
+  if (!brevoKey) {
+    throw new Error('BREVO_API_KEY not configured');
   }
   const senderEmail = process.env.BREVO_SENDER_EMAIL || 'no-reply@traveltour.com';
   const senderName = process.env.BREVO_SENDER_NAME || 'Travel Tour';
 
-  const transporter = nodemailer.createTransport({
-    host: 'smtp-relay.brevo.com',
-    port: 587,
-    secure: false,
-    auth: {
-      user: smtpUser,
-      pass: smtpKey,
+  // Try Brevo REST API first (fast fail with 401 if key invalid)
+  const resp = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'api-key': brevoKey,
     },
-    connectionTimeout: 5000,
-    greetingTimeout: 5000,
+    body: JSON.stringify({
+      sender: { email: senderEmail, name: senderName },
+      to: [{ email: to }],
+      subject,
+      htmlContent,
+    }),
   });
-
-  let timer;
-  try {
-    const info = await Promise.race([
-      transporter.sendMail({
-        from: `"${senderName}" <${senderEmail}>`,
-        to: to,
-        subject: subject,
-        html: htmlContent,
-      }),
-      new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error('SMTP send timeout after 5s')), 5000);
-      }),
-    ]);
-    return { messageId: info.messageId };
-  } finally {
-    if (timer) clearTimeout(timer);
+  if (!resp.ok) {
+    const txt = await resp.text();
+    throw new Error(`Brevo API error ${resp.status}: ${txt}`);
   }
+  return resp.json();
 }
 
 // Forgot Password Route — sends OTP to user email
@@ -998,9 +986,9 @@ app.post('/api/forgot-password', async (req, res) => {
     otpStore.set(email, { otp, expiresAt: Date.now() + 5 * 60 * 1000 });
 
     const html = `<p>Your Travel Tour password reset OTP is <strong>${otp}</strong>. It expires in 5 minutes.</p>`;
-    const smtpKey = process.env.BREVO_SMTP_KEY || process.env.BREVO_API_KEY;
+    const brevoKey = process.env.BREVO_API_KEY;
     let emailOk = false;
-    if (smtpKey) {
+    if (brevoKey) {
       try {
         await sendEmailViaBrevo(user.email, 'Password Reset OTP', html);
         emailOk = true;
@@ -1008,7 +996,7 @@ app.post('/api/forgot-password', async (req, res) => {
         console.error('Email send error:', emailErr.message);
       }
     } else {
-      console.error('[WARN] BREVO_SMTP_KEY not set — OTP is: ' + otp);
+      console.error('[WARN] BREVO_API_KEY not set — OTP is: ' + otp);
     }
 
     console.log(`[FORGOT PASSWORD] OTP for ${email}: ${otp}`);
