@@ -2294,7 +2294,7 @@ app.get('/api/operator/revenue', async (req, res) => {
     
     // Revenue by package
     const revenueByPackage = await Booking.aggregate([
-      { $match: { operatorId: mongoose.Types.ObjectId(req.user.userId), paymentStatus: 'paid' } },
+      { $match: { operatorId: new mongoose.Types.ObjectId(req.user.userId), paymentStatus: 'paid' } },
       { $group: { _id: '$package', revenue: { $sum: '$amount' }, count: { $sum: 1 } } },
       { $sort: { revenue: -1 } }
     ]);
