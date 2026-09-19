@@ -405,18 +405,15 @@ const Invoice = mongoose.model('Invoice', invoiceSchema);
 const reviewSchema = new mongoose.Schema({
   operatorId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: true
+    ref: 'User'
   },
   customerId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: true
+    ref: 'User'
   },
   packageId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Package',
-    required: true
+    ref: 'Package'
   },
   customer: {
     type: String,
@@ -2667,10 +2664,19 @@ app.post('/api/customer/reviews', async (req, res) => {
   try {
     const { packageId, packageName, rating, comment } = req.body;
     const user = await User.findById(req.user.userId);
+    let resolvedPackageName = packageName;
+    let operatorId = undefined;
+    if (packageId) {
+      const pkg = await Package.findById(packageId);
+      if (pkg) {
+        operatorId = pkg.operatorId;
+        resolvedPackageName = pkg.name;
+      }
+    }
     const review = new Review({
-      operatorId: user.role === 'tour_operator' ? req.user.userId : undefined,
+      operatorId,
       customerId: req.user.userId,
-      package: packageName || '',
+      package: resolvedPackageName || '',
       packageId: packageId || undefined,
       customer: user.fullName,
       rating: Number(rating) || 5,
@@ -2679,19 +2685,19 @@ app.post('/api/customer/reviews', async (req, res) => {
     });
     await review.save();
     if (packageId) {
-      await refreshPackageRating(packageName || '');
+      await refreshPackageRating(resolvedPackageName || '');
     }
     await Notification.create({
       userId: req.user.userId,
       type: 'review',
       title: 'Review Submitted',
-      message: `Your review for ${packageName || 'package'} has been submitted and is pending approval.`,
+      message: `Your review for ${resolvedPackageName || 'package'} has been submitted and is pending approval.`,
       read: false
     });
     res.status(201).json({ message: 'Review submitted successfully', review });
   } catch (error) {
     console.error('Error submitting review:', error);
-    res.status(500).json({ message: 'Error submitting review' });
+    res.status(500).json({ message: error.message || 'Error submitting review' });
   }
 });
 
