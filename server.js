@@ -1219,7 +1219,7 @@ app.get('/api/admin/packages', async (req, res) => {
 
 app.post('/api/admin/packages', async (req, res) => {
   try {
-    const newPackage = new Package(req.body);
+    const newPackage = new Package({ ...req.body, operatorId: req.body.operatorId || req.user.userId });
     await newPackage.save();
     res.status(201).json({ message: 'Package created successfully', package: newPackage });
   } catch (error) {
@@ -1903,7 +1903,7 @@ app.put('/api/operator/profile', async (req, res) => {
 // Operator Package Routes
 app.get('/api/operator/packages', async (req, res) => {
   try {
-    const packages = await Package.find({ operatorId: req.user.userId }).sort({ createdAt: -1 });
+    const packages = await Package.find({}).sort({ createdAt: -1 });
     res.status(200).json({ packages });
   } catch (error) {
     res.status(500).json({ message: 'Error fetching packages' });
