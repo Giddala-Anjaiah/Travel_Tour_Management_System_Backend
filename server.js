@@ -944,7 +944,7 @@ app.post('/api/login', async (req, res) => {
 const otpStore = new Map();
 
 // Helper: send email via Brevo (REST API or SMTP)
-// NOTE: If BREVO_API_KEY is invalid/not set, this throws and OTP is returned in response for testing
+
 async function sendEmailViaBrevo(to, subject, htmlContent) {
   const brevoKey = process.env.BREVO_API_KEY;
   if (!brevoKey) {
@@ -1622,6 +1622,89 @@ app.get('/api/admin/analytics', async (req, res) => {
   } catch (error) {
     console.error('Analytics error:', error);
     res.status(500).json({ message: 'Error fetching analytics' });
+  }
+});
+
+// Admin Notification Routes
+app.get('/api/admin/notifications', async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 200;
+    const olderThan = parseInt(req.query.olderThan);
+    const filter = olderThan ? { createdAt: { $lt: new Date(Date.now() - olderThan * 24 * 60 * 60 * 1000) } } : {};
+    const notifications = await Notification.find(filter)
+      .populate('userId', 'fullName email role')
+      .sort({ createdAt: -1 })
+      .limit(limit);
+    const total = await Notification.countDocuments(filter);
+    const unread = await Notification.countDocuments({ ...filter, read: false });
+    const recipientIds = await Notification.distinct('userId', filter);
+    const byType = {};
+    for (const t of ['booking', 'payment', 'review', 'system', 'offer', 'availability']) {
+      byType[t] = await Notification.countDocuments({ ...filter, type: t });
+    }
+    res.status(200).json({
+      notifications,
+      stats: { total, unread, recipients: recipientIds.length, byType }
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching notifications' });
+  }
+});
+
+app.post('/api/admin/notifications', async (req, res) => {
+  try {
+    const { title, message, type, role: roleQuery, userIds } = req.body;
+    let users;
+    if (roleQuery === 'all') {
+      users = await User.find({}).select('_id');
+    } else if (roleQuery) {
+      users = await User.find({ role: roleQuery }).select('_id');
+    } else if (userIds && userIds.length) {
+      users = await User.find({ _id: { $in: userIds } }).select('_id');
+    } else {
+      return res.status(400).json({ message: 'role or userIds required' });
+    }
+    const notifications = [];
+    for (const u of users) {
+      notifications.push(new Notification({
+        userId: u._id,
+        type: type || 'system',
+        title,
+        message,
+      }));
+    }
+    await Notification.insertMany(notifications);
+    res.status(201).json({ count: notifications.length });
+  } catch (error) {
+    res.status(500).json({ message: 'Error creating notifications' });
+  }
+});
+
+app.delete('/api/admin/notifications/:id', async (req, res) => {
+  try {
+    const notification = await Notification.findByIdAndDelete(req.params.id);
+    if (!notification) {
+      return res.status(404).json({ message: 'Notification not found' });
+    }
+    res.status(200).json({ message: 'Notification deleted' });
+  } catch (error) {
+    res.status(500).json({ message: 'Error deleting notification' });
+  }
+});
+
+app.put('/api/admin/notifications/:id/read', async (req, res) => {
+  try {
+    const notification = await Notification.findByIdAndUpdate(
+      req.params.id,
+      { read: true },
+      { new: true }
+    );
+    if (!notification) {
+      return res.status(404).json({ message: 'Notification not found' });
+    }
+    res.status(200).json({ message: 'Notification marked as read' });
+  } catch (error) {
+    res.status(500).json({ message: 'Error updating notification' });
   }
 });
 
