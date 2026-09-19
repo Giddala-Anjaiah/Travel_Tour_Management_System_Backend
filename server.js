@@ -298,29 +298,24 @@ const bookingSchema = new mongoose.Schema({
   },
   customerId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: true
+    ref: 'User'
   },
   packageId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Package'
   },
   customer: {
-    type: String,
-    required: true
+    type: String
   },
   email: {
-    type: String,
-    required: true
+    type: String
   },
   phone: String,
   package: {
-    type: String,
-    required: true
+    type: String
   },
   dates: {
-    type: String,
-    required: true
+    type: String
   },
   travelers: {
     type: Number,
@@ -365,7 +360,8 @@ const bookingSchema = new mongoose.Schema({
   rooms: Number,
   guests: Number,
   checkInDate: Date,
-  checkOutDate: Date
+  checkOutDate: Date,
+  notes: String
 });
 
 const Booking = mongoose.model('Booking', bookingSchema);
@@ -3276,7 +3272,14 @@ app.put('/api/hotel/availability/bulk', async (req, res) => {
 // --- Bookings ---
 app.get('/api/hotel/bookings', async (req, res) => {
   try {
-    const { hotelName } = req.query;
+    const { hotelName: queryHotelName } = req.query;
+    let hotelName;
+    if (queryHotelName) {
+      hotelName = queryHotelName;
+    } else {
+      const profile = await HotelProfile.findOne({ userId: req.user.userId }).catch(() => null);
+      hotelName = profile?.hotelName || '';
+    }
     const filter = hotelName ? { hotelName } : { hotelName: { $exists: true, $ne: '' } };
     const bookings = await Booking.find(filter).sort({ bookingDate: -1 });
     res.status(200).json({ bookings });
@@ -3313,7 +3316,7 @@ app.post('/api/hotel/bookings', async (req, res) => {
 
 app.put('/api/hotel/bookings/:id', async (req, res) => {
   try {
-    const updates = pickUpdates(req.body, ['guestName', 'guestEmail', 'guestPhone', 'roomType', 'rooms', 'guests', 'checkInDate', 'checkOutDate', 'amount', 'paidAmount', 'status', 'paymentStatus', 'notes']);
+    const updates = pickUpdates(req.body, ['guestName', 'guestEmail', 'guestPhone', 'roomType', 'rooms', 'guests', 'checkInDate', 'checkOutDate', 'amount', 'paidAmount', 'status', 'paymentStatus', 'notes', 'hotelName']);
     if (updates.status) {
       updates.$push = { timeline: { status: updates.status, date: new Date(), note: 'Status updated by hotel partner' } };
     }
@@ -3480,9 +3483,15 @@ app.get('/api/hotel/revenue', async (req, res) => {
   try {
     const range = req.query.range || 'month';
     const since = rangeStart(range);
-    const { hotelName } = req.query;
+    const { hotelName: queryHotelName } = req.query;
+    let hotelName;
+    if (queryHotelName) {
+      hotelName = queryHotelName;
+    } else {
+      const profile = await HotelProfile.findOne({ userId: req.user.userId }).catch(() => null);
+      hotelName = profile?.hotelName || '';
+    }
     const filter = hotelName ? { hotelName } : { hotelName: { $exists: true, $ne: '' } };
-    const rangeFilter = { ...filter, bookingDate: { $gte: since } };
 
     const totalBookings = await Booking.countDocuments(filter);
     const revenueBookings = await Booking.find({ ...filter, paymentStatus: 'paid' });
