@@ -3561,17 +3561,15 @@ app.get('/api/hotel/analytics', async (req, res) => {
 
     const user = await User.findById(req.user.userId);
     const profile = await HotelProfile.findOne({ userId: req.user.userId }).catch(() => null);
-    const hName = hotelName || profile?.hotelName;
 
-    const roomFilter = hName ? { hotel: hName } : {};
+    const roomFilter = profile?.hotelName ? { hotel: profile.hotelName } : {};
     const rooms = await Room.find(roomFilter);
     const totalRooms = rooms.reduce((sum, r) => sum + (r.total || 0), 0);
     const availableRooms = rooms.reduce((sum, r) => sum + (r.available || 0), 0);
     const bookedRooms = rooms.reduce((sum, r) => sum + (r.booked || 0), 0);
     const occupancyRate = totalRooms > 0 ? Math.round((bookedRooms / totalRooms) * 100) : 0;
 
-    const bookingFilter = hName ? { hotelName: hName } : { hotelName: { $exists: true, $ne: '' } };
-    const allBookings = await Booking.find(bookingFilter);
+    const allBookings = await Booking.find({ hotelName: { $exists: true, $ne: '' } }).sort({ bookingDate: -1 });
 
     const paidBookings = allBookings.filter(b => b.paymentStatus === 'paid');
     const totalRevenue = paidBookings.reduce((sum, b) => sum + (b.amount || 0), 0);
