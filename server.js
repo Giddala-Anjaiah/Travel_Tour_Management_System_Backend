@@ -3272,14 +3272,7 @@ app.put('/api/hotel/availability/bulk', async (req, res) => {
 // --- Bookings ---
 app.get('/api/hotel/bookings', async (req, res) => {
   try {
-    const { hotelName: queryHotelName } = req.query;
-    let hotelName;
-    if (queryHotelName) {
-      hotelName = queryHotelName;
-    } else {
-      const profile = await HotelProfile.findOne({ userId: req.user.userId }).catch(() => null);
-      hotelName = profile?.hotelName || '';
-    }
+    const { hotelName } = req.query;
     const filter = hotelName ? { hotelName } : { hotelName: { $exists: true, $ne: '' } };
     const bookings = await Booking.find(filter).sort({ bookingDate: -1 });
     res.status(200).json({ bookings });
@@ -3483,14 +3476,7 @@ app.get('/api/hotel/revenue', async (req, res) => {
   try {
     const range = req.query.range || 'month';
     const since = rangeStart(range);
-    const { hotelName: queryHotelName } = req.query;
-    let hotelName;
-    if (queryHotelName) {
-      hotelName = queryHotelName;
-    } else {
-      const profile = await HotelProfile.findOne({ userId: req.user.userId }).catch(() => null);
-      hotelName = profile?.hotelName || '';
-    }
+    const { hotelName } = req.query;
     const filter = hotelName ? { hotelName } : { hotelName: { $exists: true, $ne: '' } };
 
     const totalBookings = await Booking.countDocuments(filter);
