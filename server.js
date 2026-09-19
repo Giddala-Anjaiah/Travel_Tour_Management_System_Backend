@@ -294,8 +294,7 @@ const Room = mongoose.model('Room', roomSchema);
 const bookingSchema = new mongoose.Schema({
   operatorId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: true
+    ref: 'User'
   },
   customerId: {
     type: mongoose.Schema.Types.ObjectId,
@@ -304,8 +303,7 @@ const bookingSchema = new mongoose.Schema({
   },
   packageId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Package',
-    required: true
+    ref: 'Package'
   },
   customer: {
     type: String,
@@ -2469,11 +2467,20 @@ app.post('/api/customer/bookings', async (req, res) => {
       paymentStatus: 'pending',
       bookingId: `BKG-${Date.now().toString().slice(-8)}`
     };
-    if (packageId) payload.packageId = packageId;
+    if (packageId) {
+      payload.packageId = packageId;
+      const pkg = await Package.findById(packageId);
+      if (pkg) {
+        payload.operatorId = pkg.operatorId;
+        payload.package = pkg.name;
+      }
+    }
     payload.timeline = [{ status: 'pending', date: new Date(), note: 'Booking created' }];
     const newBooking = new Booking(payload);
     await newBooking.save();
-    await Package.findByIdAndUpdate(packageId, { $inc: { bookings: 1 } }).catch(() => {});
+    if (packageId) {
+      await Package.findByIdAndUpdate(packageId, { $inc: { bookings: 1 } }).catch(() => {});
+    }
     res.status(201).json({ message: 'Booking created successfully', booking: newBooking });
   } catch (error) {
     console.error('Error creating booking:', error);
