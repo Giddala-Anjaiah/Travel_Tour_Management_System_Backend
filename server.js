@@ -1645,6 +1645,77 @@ app.get('/api/admin/analytics', async (req, res) => {
   }
 });
 
+// Admin Reports Summary Route
+app.get('/api/admin/reports/summary', async (req, res) => {
+  try {
+    const range = req.query.range || 'month';
+    const since = rangeStart(range);
+
+    const allBookings = await Booking.find({});
+
+    const bookingsByPayment = {};
+    allBookings.forEach(b => {
+      const status = b.paymentStatus || 'pending';
+      bookingsByPayment[status] = (bookingsByPayment[status] || 0) + 1;
+    });
+
+    const revenueByCategory = await Package.aggregate([
+      {
+        $lookup: {
+          from: 'bookings',
+          localField: '_id',
+          foreignField: 'packageId',
+          as: 'bookings'
+        }
+      },
+      {
+        $group: {
+          _id: '$category',
+          name: { $first: '$category' },
+          revenue: { $sum: { $sum: '$bookings.amount' } }
+        }
+      },
+      { $sort: { revenue: -1 } },
+      { $limit: 10 }
+    ]);
+
+    const revenueByDestination = await Package.aggregate([
+      {
+        $lookup: {
+          from: 'bookings',
+          localField: '_id',
+          foreignField: 'packageId',
+          as: 'bookings'
+        }
+      },
+      {
+        $group: {
+          _id: '$destination',
+          name: { $first: '$destination' },
+          revenue: { $sum: { $sum: '$bookings.amount' } }
+        }
+      },
+      { $sort: { revenue: -1 } },
+      { $limit: 10 }
+    ]);
+
+    const rangeBookings = allBookings.filter(b => new Date(b.bookingDate) >= since);
+
+    res.status(200).json({
+      bookingsByPayment,
+      revenueByCategory,
+      revenueByDestination,
+      range: {
+        bookings: rangeBookings.length,
+        revenue: rangeBookings.reduce((sum, b) => sum + (b.amount || 0), 0)
+      }
+    });
+  } catch (error) {
+    console.error('Reports summary error:', error);
+    res.status(500).json({ message: 'Error fetching reports summary' });
+  }
+});
+
 // Admin Notification Routes
 app.get('/api/admin/notifications', async (req, res) => {
   try {
