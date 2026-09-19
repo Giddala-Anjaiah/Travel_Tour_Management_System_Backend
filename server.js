@@ -3561,7 +3561,7 @@ app.get('/api/hotel/analytics', async (req, res) => {
 
     const user = await User.findById(req.user.userId);
     const profile = await HotelProfile.findOne({ userId: req.user.userId }).catch(() => null);
-    const hName = hotelName || profile?.hotelName || user?.email || '';
+    const hName = hotelName || profile?.hotelName;
 
     const roomFilter = hName ? { hotel: hName } : {};
     const rooms = await Room.find(roomFilter);
@@ -3621,8 +3621,8 @@ app.get('/api/hotel/analytics', async (req, res) => {
 
     const currentlyCheckedIn = allBookings.filter(b => b.status === 'checked_in').length;
 
-    const operatorReviews = await Review.find({ operatorId: req.user.userId });
-    const recentReviews = operatorReviews.slice(0, 5).map(r => ({
+    const operatorReviews = await Review.find({}).sort({ date: -1 }).limit(5);
+    const recentReviews = operatorReviews.map(r => ({
       _id: r._id,
       customer: r.customer,
       rating: r.rating,
