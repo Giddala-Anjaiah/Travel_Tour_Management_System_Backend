@@ -2481,6 +2481,14 @@ app.post('/api/customer/bookings', async (req, res) => {
     if (packageId) {
       await Package.findByIdAndUpdate(packageId, { $inc: { bookings: 1 } }).catch(() => {});
     }
+    await Notification.create({
+      userId: req.user.userId,
+      type: 'booking',
+      title: 'Booking Confirmed',
+      message: `Your booking for ${payload.package || 'hotel'} (${payload.bookingId}) has been received and is pending confirmation.`,
+      relatedId: newBooking._id,
+      read: false
+    });
     res.status(201).json({ message: 'Booking created successfully', booking: newBooking });
   } catch (error) {
     console.error('Error creating booking:', error);
@@ -2515,6 +2523,16 @@ app.put('/api/customer/bookings/:id', async (req, res) => {
     if (!booking) {
       return res.status(404).json({ message: 'Booking not found' });
     }
+    if (req.body.status && req.body.status !== booking.status) {
+      await Notification.create({
+        userId: req.user.userId,
+        type: 'booking',
+        title: 'Booking Status Updated',
+        message: `Your booking (${booking.bookingId}) status has been updated to "${req.body.status}".`,
+        relatedId: booking._id,
+        read: false
+      });
+    }
     res.status(200).json({ message: 'Booking updated', booking });
   } catch (error) {
     res.status(500).json({ message: 'Error updating booking' });
@@ -2540,6 +2558,23 @@ app.put('/api/customer/bookings/:id/pay', async (req, res) => {
     await booking.save();
     if (booking.paymentStatus === 'paid') {
       await createPaidInvoice(booking);
+      await Notification.create({
+        userId: req.user.userId,
+        type: 'payment',
+        title: 'Payment Confirmed',
+        message: `Payment of ₹${paymentAmount} received. Your booking (${booking.bookingId}) is now fully confirmed.`,
+        relatedId: booking._id,
+        read: false
+      });
+    } else if (booking.paymentStatus === 'partial') {
+      await Notification.create({
+        userId: req.user.userId,
+        type: 'payment',
+        title: 'Partial Payment Received',
+        message: `Payment of ₹${paymentAmount} received. Remaining balance: ₹${booking.amount - booking.paidAmount}.`,
+        relatedId: booking._id,
+        read: false
+      });
     }
     res.status(200).json({ message: 'Payment processed', booking });
   } catch (error) {
