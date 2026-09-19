@@ -716,6 +716,31 @@ const availabilitySchema = new mongoose.Schema({
 
 const Availability = mongoose.model('Availability', availabilitySchema);
 
+// Wishlist Schema
+const wishlistSchema = new mongoose.Schema({
+  userId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
+  packageId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Package',
+    required: true
+  },
+  packageName: String,
+  destination: String,
+  image: String,
+  rating: Number,
+  price: Number,
+  category: String,
+  addedAt: {
+    type: Date,
+    default: Date.now
+  }
+});
+const Wishlist = mongoose.model('Wishlist', wishlistSchema);
+
 function pickUpdates(body, keys) {
   const updates = {};
   for (const key of keys) {
@@ -2236,6 +2261,647 @@ app.delete('/api/operator/notifications/:id', async (req, res) => {
     res.status(200).json({ message: 'Notification deleted' });
   } catch (error) {
     res.status(500).json({ message: 'Error deleting notification' });
+  }
+});
+
+// =============================================================================
+// Public Routes
+// =============================================================================
+
+// Public Package Routes (no auth required)
+app.get('/api/packages', async (req, res) => {
+  try {
+    const { publishedOnly, category, search, limit, page } = req.query;
+    const filter = {};
+    if (publishedOnly === 'true') {
+      filter.publishedStatus = 'published';
+    }
+    if (category && category !== 'all') {
+      filter.category = category;
+    }
+    if (search) {
+      filter.name = new RegExp(search, 'i');
+    }
+    let query = Package.find(filter).sort({ createdAt: -1 });
+    if (limit) query = query.limit(Number(limit));
+    if (page && limit) query = query.skip((Number(page) - 1) * Number(limit));
+    const packages = await query.exec();
+    res.status(200).json({ packages });
+  } catch (error) {
+    console.error('Error fetching packages:', error);
+    res.status(500).json({ message: 'Error fetching packages' });
+  }
+});
+
+app.get('/api/packages/:id', async (req, res) => {
+  try {
+    const pkg = await Package.findById(req.params.id).populate('operatorId', 'companyName');
+    if (!pkg) {
+      return res.status(404).json({ message: 'Package not found' });
+    }
+    res.status(200).json({ package: pkg });
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching package' });
+  }
+});
+
+// Public Hotel Routes
+app.get('/api/public/hotels', async (req, res) => {
+  try {
+    const { location, search } = req.query;
+    const filter = { status: 'active' };
+    if (location && location !== 'all') {
+      filter.location = location;
+    }
+    if (search) {
+      filter.name = new RegExp(search, 'i');
+    }
+    const hotels = await Hotel.find(filter).sort({ createdAt: -1 });
+    const hotelsWithMinPrice = await Promise.all(hotels.map(async (hotel) => {
+      const rooms = await Room.find({ hotel: hotel.name });
+      const minPrice = rooms.length > 0 ? Math.min(...rooms.map(r => r.price)) : 0;
+      return {
+        ...hotel.toObject(),
+        minPrice,
+        rooms
+      };
+    }));
+    res.status(200).json({ hotels: hotelsWithMinPrice });
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching hotels' });
+  }
+});
+
+app.get('/api/public/hotels/:id', async (req, res) => {
+  try {
+    const hotel = await Hotel.findById(req.params.id);
+    if (!hotel) {
+      return res.status(404).json({ message: 'Hotel not found' });
+    }
+    const rooms = await Room.find({ hotel: hotel.name });
+    const minPrice = rooms.length > 0 ? Math.min(...rooms.map(r => r.price)) : 0;
+    res.status(200).json({ hotel: { ...hotel.toObject(), minPrice, rooms } });
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching hotel' });
+  }
+});
+
+// Public Destination Routes (aggregated destinations from packages)
+app.get('/api/public/destinations', async (req, res) => {
+  try {
+    const destinations = await Package.aggregate([
+      { $match: { publishedStatus: 'published' } },
+      {
+        $group: {
+          _id: '$destination',
+          name: { $first: '$destination' },
+          count: { $sum: 1 },
+          image: { $first: { $ifNull: ['$$ROOT.image', { $arrayElemAt: ['$images', 0] }] } },
+          packages: { $push: { _id: '$_id', name: '$name', price: '$price', rating: '$rating' } },
+          rating: { $avg: '$rating' }
+        }
+      },
+      { $sort: { count: -1 } },
+      { $limit: 20 }
+    ]);
+    res.status(200).json({ destinations });
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching destinations' });
+  }
+});
+
+// =============================================================================
+// Customer Routes (require authenticate + requireCustomer)
+// =============================================================================
+app.use('/api/customer', authenticate, requireCustomer);
+
+// --- Profile ---
+app.get('/api/customer/profile', async (req, res) => {
+  try {
+    const user = await User.findById(req.user.userId).select('-password');
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    res.status(200).json({
+      profile: {
+        fullName: user.fullName,
+        email: user.email,
+        phone: user.phone,
+        role: user.role,
+        status: user.status,
+        createdAt: user.createdAt,
+        lastLogin: user.lastLogin
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching profile' });
+  }
+});
+
+app.put('/api/customer/profile', async (req, res) => {
+  try {
+    const updates = pickUpdates(req.body, ['fullName', 'email', 'phone']);
+    if (updates.email) {
+      const existing = await User.findOne({ email: updates.email, _id: { $ne: req.user.userId } });
+      if (existing) {
+        return res.status(400).json({ message: 'Email already in use' });
+      }
+    }
+    const user = await User.findByIdAndUpdate(req.user.userId, updates, { new: true }).select('-password');
+    res.status(200).json({
+      message: 'Profile updated successfully',
+      profile: {
+        fullName: user.fullName,
+        email: user.email,
+        phone: user.phone,
+        role: user.role,
+        status: user.status,
+        createdAt: user.createdAt,
+        lastLogin: user.lastLogin
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Error updating profile' });
+  }
+});
+
+// --- Packages (customer view of published packages) ---
+app.get('/api/customer/packages', async (req, res) => {
+  try {
+    const { category, search, bestseller, limit } = req.query;
+    const filter = { publishedStatus: 'published' };
+    if (category && category !== 'all') filter.category = category;
+    if (search) filter.name = new RegExp(search, 'i');
+    if (bestseller === 'true') filter.rating = { $gte: 4 };
+    let query = Package.find(filter).sort({ createdAt: -1 });
+    if (limit) query = query.limit(Number(limit));
+    const packages = await query.exec();
+    res.status(200).json({ packages });
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching packages' });
+  }
+});
+
+// --- Bookings ---
+app.get('/api/customer/bookings', async (req, res) => {
+  try {
+    const bookings = await Booking.find({ customerId: req.user.userId })
+      .populate('packageId', 'name destination image price')
+      .sort({ bookingDate: -1 });
+    res.status(200).json({ bookings });
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching bookings' });
+  }
+});
+
+app.post('/api/customer/bookings', async (req, res) => {
+  try {
+    const { packageId, package: packageName, dates, travelers, amount, email, phone, customer } = req.body;
+    const payload = {
+      customerId: req.user.userId,
+      customer: customer || req.user.userId,
+      email: email || req.user.email,
+      package: packageName || '',
+      dates: dates || '',
+      travelers: travelers || 1,
+      amount: amount || 0,
+      status: 'pending',
+      paymentStatus: 'pending',
+      bookingId: `BKG-${Date.now().toString().slice(-8)}`
+    };
+    if (packageId) payload.packageId = packageId;
+    payload.timeline = [{ status: 'pending', date: new Date(), note: 'Booking created' }];
+    const newBooking = new Booking(payload);
+    await newBooking.save();
+    await Package.findByIdAndUpdate(packageId, { $inc: { bookings: 1 } }).catch(() => {});
+    res.status(201).json({ message: 'Booking created successfully', booking: newBooking });
+  } catch (error) {
+    console.error('Error creating booking:', error);
+    res.status(500).json({ message: 'Error creating booking' });
+  }
+});
+
+app.get('/api/customer/bookings/:id', async (req, res) => {
+  try {
+    const booking = await Booking.findOne({ _id: req.params.id, customerId: req.user.userId })
+      .populate('packageId', 'name destination image price operatorId');
+    if (!booking) {
+      return res.status(404).json({ message: 'Booking not found' });
+    }
+    res.status(200).json({ booking });
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching booking' });
+  }
+});
+
+app.put('/api/customer/bookings/:id', async (req, res) => {
+  try {
+    const updates = pickUpdates(req.body, ['dates', 'travelers', 'phone']);
+    if (req.body.status) {
+      updates.$push = { timeline: { status: req.body.status, date: new Date(), note: 'Status updated by customer' } };
+    }
+    const booking = await Booking.findOneAndUpdate(
+      { _id: req.params.id, customerId: req.user.userId },
+      updates,
+      { new: true }
+    );
+    if (!booking) {
+      return res.status(404).json({ message: 'Booking not found' });
+    }
+    res.status(200).json({ message: 'Booking updated', booking });
+  } catch (error) {
+    res.status(500).json({ message: 'Error updating booking' });
+  }
+});
+
+app.put('/api/customer/bookings/:id/pay', async (req, res) => {
+  try {
+    const { amount } = req.body;
+    const booking = await Booking.findOne({ _id: req.params.id, customerId: req.user.userId });
+    if (!booking) {
+      return res.status(404).json({ message: 'Booking not found' });
+    }
+    const paymentAmount = Math.min(amount || 0, booking.amount - (booking.paidAmount || 0));
+    booking.paidAmount = (booking.paidAmount || 0) + paymentAmount;
+    if (booking.paidAmount >= booking.amount) {
+      booking.paymentStatus = 'paid';
+      booking.status = 'confirmed';
+    } else if (booking.paidAmount > 0) {
+      booking.paymentStatus = 'partial';
+    }
+    booking.timeline.push({ status: booking.paymentStatus, date: new Date(), note: `Payment of ₹${paymentAmount} received` });
+    await booking.save();
+    if (booking.paymentStatus === 'paid') {
+      await createPaidInvoice(booking);
+    }
+    res.status(200).json({ message: 'Payment processed', booking });
+  } catch (error) {
+    res.status(500).json({ message: 'Error processing payment' });
+  }
+});
+
+// --- Itineraries (customer's own itineraries from their bookings) ---
+app.get('/api/customer/itineraries', async (req, res) => {
+  try {
+    const bookings = await Booking.find({ customerId: req.user.userId })
+      .populate({
+        path: 'packageId',
+        select: 'name destination image price rating'
+      });
+    const itineraries = bookings.filter(b => b.packageId).map(b => ({
+      _id: b._id,
+      packageName: b.package || b.packageId?.name || '',
+      destination: b.packageId?.destination || '',
+      image: b.packageId?.image || '',
+      price: b.packageId?.price || 0,
+      rating: b.packageId?.rating || 0,
+      days: b.packageId?.days || 3,
+      hotels: b.packageId?.hotels || 0,
+      dates: b.dates,
+      travelers: b.travelers,
+      amount: b.amount,
+      paidAmount: b.paidAmount,
+      status: b.status,
+      paymentStatus: b.paymentStatus,
+      bookingDate: b.bookingDate
+    }));
+    const itinerariesWithDetails = await Promise.all(itineraries.map(async (it) => {
+      const itinerary = await Itinerary.findOne({ packageId: bookings.find(b => b.packageId && b.packageId._id.toString() === it.packageId?.toString() || b.package) });
+      return {
+        ...it,
+        dayDetails: itinerary?.dayDetails || [],
+        highlights: itinerary?.highlights || []
+      };
+    }));
+    res.status(200).json({ itineraries: itinerariesWithDetails });
+  } catch (error) {
+    console.error('Error fetching itineraries:', error);
+    res.status(500).json({ message: 'Error fetching itineraries' });
+  }
+});
+
+// --- Invoices ---
+app.get('/api/customer/invoices', async (req, res) => {
+  try {
+    const invoices = await Invoice.find({ email: req.user.email })
+      .sort({ date: -1 });
+    if (invoices.length === 0) {
+      const bookings = await Booking.find({ customerId: req.user.userId, paymentStatus: 'paid' });
+      const generated = await Promise.all(bookings.map(b => createPaidInvoice(b)));
+      const allInvoices = generated.filter(i => i !== null);
+      return res.status(200).json({ invoices: allInvoices });
+    }
+    res.status(200).json({ invoices });
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching invoices' });
+  }
+});
+
+app.get('/api/customer/invoices/:id', async (req, res) => {
+  try {
+    const invoice = await Invoice.findById(req.params.id);
+    if (!invoice || invoice.email !== req.user.email) {
+      return res.status(404).json({ message: 'Invoice not found' });
+    }
+    res.status(200).json({ invoice });
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching invoice' });
+  }
+});
+
+// --- Reviews ---
+app.get('/api/customer/reviews', async (req, res) => {
+  try {
+    const reviews = await Review.find({ customerId: req.user.userId })
+      .populate('packageId', 'name destination image')
+      .sort({ date: -1 });
+    res.status(200).json({ reviews });
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching reviews' });
+  }
+});
+
+app.post('/api/customer/reviews', async (req, res) => {
+  try {
+    const { packageId, packageName, rating, comment } = req.body;
+    const user = await User.findById(req.user.userId);
+    const review = new Review({
+      operatorId: user.role === 'tour_operator' ? req.user.userId : undefined,
+      customerId: req.user.userId,
+      package: packageName || '',
+      packageId: packageId || undefined,
+      customer: user.fullName,
+      rating: Number(rating) || 5,
+      comment: comment || '',
+      status: 'pending'
+    });
+    await review.save();
+    if (packageId) {
+      await refreshPackageRating(packageName || '');
+    }
+    await Notification.create({
+      userId: req.user.userId,
+      type: 'review',
+      title: 'Review Submitted',
+      message: `Your review for ${packageName || 'package'} has been submitted and is pending approval.`,
+      read: false
+    });
+    res.status(201).json({ message: 'Review submitted successfully', review });
+  } catch (error) {
+    console.error('Error submitting review:', error);
+    res.status(500).json({ message: 'Error submitting review' });
+  }
+});
+
+app.delete('/api/customer/reviews/:id', async (req, res) => {
+  try {
+    const review = await Review.findOneAndDelete({ _id: req.params.id, customerId: req.user.userId });
+    if (!review) {
+      return res.status(404).json({ message: 'Review not found' });
+    }
+    if (review.package) {
+      await refreshPackageRating(review.package);
+    }
+    res.status(200).json({ message: 'Review deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: 'Error deleting review' });
+  }
+});
+
+// --- Wishlist ---
+app.get('/api/customer/wishlist', async (req, res) => {
+  try {
+    const items = await Wishlist.find({ userId: req.user.userId })
+      .populate('packageId', 'name destination image price rating category')
+      .sort({ addedAt: -1 });
+    const wishlist = items.map(item => {
+      const pkg = item.packageId || {};
+      return {
+        _id: item._id,
+        packageId: item.packageId?._id || item.packageId,
+        packageName: item.packageName || pkg.name || '',
+        destination: item.destination || pkg.destination || '',
+        image: item.image || pkg.image || '',
+        price: item.price || pkg.price || 0,
+        rating: item.rating || pkg.rating || 0,
+        category: item.category || pkg.category || 'tour',
+        addedAt: item.addedAt
+      };
+    });
+    res.status(200).json({ wishlist });
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching wishlist' });
+  }
+});
+
+app.post('/api/customer/wishlist', async (req, res) => {
+  try {
+    const { packageId } = req.body;
+    if (!packageId) {
+      return res.status(400).json({ message: 'Package ID is required' });
+    }
+    const existing = await Wishlist.findOne({ userId: req.user.userId, packageId });
+    if (existing) {
+      return res.status(400).json({ message: 'Package already in wishlist' });
+    }
+    const pkg = await Package.findById(packageId);
+    if (!pkg) {
+      return res.status(404).json({ message: 'Package not found' });
+    }
+    const item = new Wishlist({
+      userId: req.user.userId,
+      packageId,
+      packageName: pkg.name,
+      destination: pkg.destination,
+      image: pkg.image,
+      price: pkg.price,
+      rating: pkg.rating,
+      category: pkg.category
+    });
+    await item.save();
+    res.status(201).json({ message: 'Added to wishlist', item });
+  } catch (error) {
+    res.status(500).json({ message: 'Error adding to wishlist' });
+  }
+});
+
+app.delete('/api/customer/wishlist/:id', async (req, res) => {
+  try {
+    const item = await Wishlist.findOneAndDelete({ _id: req.params.id, userId: req.user.userId });
+    if (!item) {
+      return res.status(404).json({ message: 'Wishlist item not found' });
+    }
+    res.status(200).json({ message: 'Removed from wishlist' });
+  } catch (error) {
+    res.status(500).json({ message: 'Error removing from wishlist' });
+  }
+});
+
+// --- Notifications ---
+app.get('/api/customer/notifications', async (req, res) => {
+  try {
+    const notifications = await Notification.find({ userId: req.user.userId })
+      .sort({ createdAt: -1 })
+      .limit(50);
+    res.status(200).json({ notifications });
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching notifications' });
+  }
+});
+
+app.put('/api/customer/notifications/:id/read', async (req, res) => {
+  try {
+    const notification = await Notification.findOneAndUpdate(
+      { _id: req.params.id, userId: req.user.userId },
+      { read: true },
+      { new: true }
+    );
+    if (!notification) {
+      return res.status(404).json({ message: 'Notification not found' });
+    }
+    res.status(200).json({ message: 'Notification marked as read', notification });
+  } catch (error) {
+    res.status(500).json({ message: 'Error updating notification' });
+  }
+});
+
+app.put('/api/customer/notifications/read-all', async (req, res) => {
+  try {
+    await Notification.updateMany(
+      { userId: req.user.userId, read: false },
+      { read: true }
+    );
+    res.status(200).json({ message: 'All notifications marked as read' });
+  } catch (error) {
+    res.status(500).json({ message: 'Error updating notifications' });
+  }
+});
+
+app.delete('/api/customer/notifications/:id', async (req, res) => {
+  try {
+    const notification = await Notification.findOneAndDelete({ _id: req.params.id, userId: req.user.userId });
+    if (!notification) {
+      return res.status(404).json({ message: 'Notification not found' });
+    }
+    res.status(200).json({ message: 'Notification deleted' });
+  } catch (error) {
+    res.status(500).json({ message: 'Error deleting notification' });
+  }
+});
+
+// --- Analytics ---
+app.get('/api/customer/analytics', async (req, res) => {
+  try {
+    const range = req.query.range || 'month';
+    const rangeMap = {
+      week: 7,
+      month: 30,
+      quarter: 90,
+      year: 365
+    };
+    const days = rangeMap[range] || 30;
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - days);
+
+    const allBookings = await Booking.find({ customerId: req.user.userId });
+    const rangeBookings = allBookings.filter(b => new Date(b.bookingDate) >= startDate);
+
+    const totalBookings = allBookings.length;
+    const rangeBookingsCount = rangeBookings.length;
+    const totalSpent = allBookings.reduce((sum, b) => sum + (b.paidAmount || 0), 0);
+    const rangeSpent = rangeBookings.reduce((sum, b) => sum + (b.paidAmount || 0), 0);
+
+    const bookingStatus = {};
+    allBookings.forEach(b => {
+      bookingStatus[b.status] = (bookingStatus[b.status] || 0) + 1;
+    });
+
+    const paymentStatus = {};
+    allBookings.forEach(b => {
+      paymentStatus[b.paymentStatus] = (paymentStatus[b.paymentStatus] || 0) + 1;
+    });
+
+    const topDestinationsMap = {};
+    allBookings.forEach(b => {
+      const dest = b.packageId?.destination || b.package || 'Unknown';
+      topDestinationsMap[dest] = (topDestinationsMap[dest] || 0) + 1;
+    });
+    const topDestinations = Object.entries(topDestinationsMap)
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+
+    const reviews = await Review.find({ customerId: req.user.userId });
+    const recentReviews = reviews.slice(0, 5).map(r => ({
+      _id: r._id,
+      package: r.package,
+      rating: r.rating,
+      comment: r.comment,
+      date: r.date
+    }));
+
+    const upcomingBookings = allBookings
+      .filter(b => b.status === 'confirmed' || b.status === 'pending')
+      .slice(0, 5);
+
+    const recentBookings = allBookings
+      .sort((a, b) => new Date(b.bookingDate) - new Date(a.bookingDate))
+      .slice(0, 6)
+      .map(b => ({
+        _id: b._id,
+        package: b.package,
+        bookingDate: b.bookingDate,
+        amount: b.amount,
+        paymentStatus: b.paymentStatus,
+        status: b.status
+      }));
+
+    const alerts = {
+      upcomingTrips: upcomingBookings.length,
+      pendingPayments: allBookings.filter(b => b.paymentStatus === 'partial' || b.paymentStatus === 'pending').length
+    };
+
+    const loyaltyTier = totalSpent >= 100000 ? 'Gold' : totalSpent >= 50000 ? 'Silver' : 'Explorer';
+
+    const revenueTrend = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date();
+      d.setMonth(d.getMonth() - i);
+      const monthStart = new Date(d.getFullYear(), d.getMonth(), 1);
+      const monthEnd = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+      const monthBookings = allBookings.filter(b => new Date(b.bookingDate) >= monthStart && new Date(b.bookingDate) <= monthEnd);
+      const revenue = monthBookings.reduce((sum, b) => sum + (b.paidAmount || 0), 0);
+      revenueTrend.push({
+        label: d.toLocaleString('default', { month: 'short' }),
+        revenue
+      });
+    }
+
+    res.status(200).json({
+      totalBookings,
+      rangeBookings: rangeBookingsCount,
+      totalSpent,
+      rangeSpent,
+      bookingStatus,
+      paymentStatus,
+      topDestinations,
+      recentReviews,
+      upcomingTrips: upcomingBookings.map(b => ({
+        _id: b._id,
+        package: b.package,
+        dates: b.dates,
+        travelers: b.travelers,
+        amount: b.amount,
+        status: b.status
+      })),
+      recentBookings,
+      alerts,
+      loyaltyTier,
+      revenueTrend
+    });
+  } catch (error) {
+    console.error('Error fetching analytics:', error);
+    res.status(500).json({ message: 'Error fetching analytics' });
   }
 });
 
