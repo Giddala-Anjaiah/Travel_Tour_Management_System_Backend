@@ -356,7 +356,16 @@ const bookingSchema = new mongoose.Schema({
     status: String,
     date: Date,
     note: String
-  }]
+  }],
+  hotelName: String,
+  guestName: String,
+  guestEmail: String,
+  guestPhone: String,
+  roomType: String,
+  rooms: Number,
+  guests: Number,
+  checkInDate: Date,
+  checkOutDate: Date
 });
 
 const Booking = mongoose.model('Booking', bookingSchema);
@@ -711,6 +720,49 @@ const availabilitySchema = new mongoose.Schema({
 
 const Availability = mongoose.model('Availability', availabilitySchema);
 
+// HotelProfile Schema
+const hotelProfileSchema = new mongoose.Schema({
+  userId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true,
+    unique: true
+  },
+  email: String,
+  phone: String,
+  hotelName: {
+    type: String,
+    required: true
+  },
+  address: String,
+  city: String,
+  state: String,
+  country: String,
+  postalCode: String,
+  website: String,
+  description: String,
+  starRating: Number,
+  checkinTime: String,
+  checkoutTime: String,
+  amenities: [String],
+  registrationNumber: String,
+  taxId: String,
+  logo: String,
+  settings: {
+    emailNotifications: { type: Boolean, default: true },
+    smsNotifications: { type: Boolean, default: false },
+    pushNotifications: { type: Boolean, default: true },
+    bookingAlerts: { type: Boolean, default: true },
+    paymentUpdates: { type: Boolean, default: true },
+    reviewAlerts: { type: Boolean, default: true },
+    guestNotifications: { type: Boolean, default: true },
+    currency: { type: String, default: 'INR' },
+    language: { type: String, default: 'English' },
+    timezone: { type: String, default: 'IST' }
+  }
+});
+const HotelProfile = mongoose.model('HotelProfile', hotelProfileSchema);
+
 // Wishlist Schema
 const wishlistSchema = new mongoose.Schema({
   userId: {
@@ -775,6 +827,13 @@ function requireTourOperator(req, res, next) {
 function requireCustomer(req, res, next) {
   if (req.user?.role !== 'customer') {
     return res.status(403).json({ message: 'Customer access required' });
+  }
+  next();
+}
+
+function requireHotelPartner(req, res, next) {
+  if (req.user?.role !== 'hotel_partner') {
+    return res.status(403).json({ message: 'Hotel partner access required' });
   }
   next();
 }
@@ -3020,6 +3079,640 @@ app.get('/api/customer/analytics', async (req, res) => {
     });
   } catch (error) {
     console.error('Error fetching analytics:', error);
+    res.status(500).json({ message: 'Error fetching analytics' });
+  }
+});
+
+// =============================================================================
+// Hotel Partner Routes (require authenticate + requireHotelPartner)
+// =============================================================================
+app.use('/api/hotel', authenticate, requireHotelPartner);
+
+// --- Profile ---
+app.get('/api/hotel/profile', async (req, res) => {
+  try {
+    const user = await User.findById(req.user.userId).select('-password');
+    const profile = await HotelProfile.findOne({ userId: req.user.userId });
+    res.status(200).json({
+      profile: profile || { hotelName: '' },
+      user: { email: user?.email || '', phone: user?.phone || '' }
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching profile' });
+  }
+});
+
+app.put('/api/hotel/profile', async (req, res) => {
+  try {
+    const updates = pickUpdates(req.body, ['hotelName', 'email', 'phone', 'address', 'city', 'state', 'country', 'postalCode', 'website', 'description', 'starRating', 'checkinTime', 'checkoutTime', 'amenities', 'registrationNumber', 'taxId', 'logo']);
+
+    if (updates.email || updates.phone) {
+      const userUpdates = {};
+      if (updates.email) userUpdates.email = updates.email;
+      if (updates.phone) userUpdates.phone = updates.phone;
+      if (updates.password) userUpdates.password = await bcrypt.hash(updates.password, 10);
+      if (Object.keys(userUpdates).length > 0) {
+        await User.findByIdAndUpdate(req.user.userId, userUpdates, { new: true });
+      }
+    }
+
+    const existing = await HotelProfile.findOne({ userId: req.user.userId });
+    let profile;
+    if (existing) {
+      profile = await HotelProfile.findOneAndUpdate({ userId: req.user.userId }, updates, { new: true, setDefaultsOnInsert: true });
+    } else {
+      profile = new HotelProfile({ userId: req.user.userId, ...updates });
+      await profile.save();
+    }
+    res.status(200).json({ message: 'Profile updated successfully', profile });
+  } catch (error) {
+    console.error('Error updating profile:', error);
+    res.status(500).json({ message: 'Error updating profile' });
+  }
+});
+
+// --- Settings ---
+app.get('/api/hotel/settings', async (req, res) => {
+  try {
+    let profile = await HotelProfile.findOne({ userId: req.user.userId });
+    if (!profile) {
+      profile = new HotelProfile({ userId: req.user.userId, hotelName: '' });
+      await profile.save();
+    }
+    res.status(200).json({ settings: profile.settings || {} });
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching settings' });
+  }
+});
+
+app.put('/api/hotel/settings', async (req, res) => {
+  try {
+    const updates = pickUpdates(req.body, ['emailNotifications', 'smsNotifications', 'pushNotifications', 'bookingAlerts', 'paymentUpdates', 'reviewAlerts', 'guestNotifications', 'currency', 'language', 'timezone']);
+    await HotelProfile.findOneAndUpdate(
+      { userId: req.user.userId },
+      { $set: { 'settings.$[]': '' } },
+      { new: true, upsert: true, setDefaultsOnInsert: true }
+    );
+    const profile = await HotelProfile.findOneAndUpdate(
+      { userId: req.user.userId },
+      {
+        $set: {
+          'settings.emailNotifications': updates.emailNotifications,
+          'settings.smsNotifications': updates.smsNotifications,
+          'settings.pushNotifications': updates.pushNotifications,
+          'settings.bookingAlerts': updates.bookingAlerts,
+          'settings.paymentUpdates': updates.paymentUpdates,
+          'settings.reviewAlerts': updates.reviewAlerts,
+          'settings.guestNotifications': updates.guestNotifications,
+          'settings.currency': updates.currency,
+          'settings.language': updates.language,
+          'settings.timezone': updates.timezone
+        }
+      },
+      { new: true }
+    );
+    res.status(200).json({ message: 'Settings updated successfully', settings: profile.settings });
+  } catch (error) {
+    console.error('Error updating settings:', error);
+    res.status(500).json({ message: 'Error updating settings' });
+  }
+});
+
+// --- Rooms ---
+app.get('/api/hotel/rooms', async (req, res) => {
+  try {
+    const { hotelName } = req.query;
+    const filter = hotelName ? { hotel: hotelName } : {};
+    const rooms = await Room.find(filter).sort({ createdAt: -1 });
+    res.status(200).json({ rooms });
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching rooms' });
+  }
+});
+
+app.post('/api/hotel/rooms', async (req, res) => {
+  try {
+    const room = new Room({ ...req.body });
+    await room.save();
+    res.status(201).json({ message: 'Room created successfully', room });
+  } catch (error) {
+    res.status(500).json({ message: 'Error creating room' });
+  }
+});
+
+app.put('/api/hotel/rooms/:id', async (req, res) => {
+  try {
+    const updates = pickUpdates(req.body, ['type', 'total', 'available', 'booked', 'price', 'status', 'hotel']);
+    const room = await Room.findByIdAndUpdate(req.params.id, updates, { new: true });
+    if (!room) {
+      return res.status(404).json({ message: 'Room not found' });
+    }
+    res.status(200).json({ message: 'Room updated successfully', room });
+  } catch (error) {
+    res.status(500).json({ message: 'Error updating room' });
+  }
+});
+
+app.delete('/api/hotel/rooms/:id', async (req, res) => {
+  try {
+    await Room.findByIdAndDelete(req.params.id);
+    res.status(200).json({ message: 'Room deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: 'Error deleting room' });
+  }
+});
+
+// --- Pricing (alias for rooms, focused on price updates) ---
+app.get('/api/hotel/pricing', async (req, res) => {
+  try {
+    const { hotelName } = req.query;
+    const filter = hotelName ? { hotel: hotelName } : {};
+    const rooms = await Room.find(filter).sort({ createdAt: -1 });
+    res.status(200).json({ rooms });
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching pricing' });
+  }
+});
+
+app.put('/api/hotel/pricing/:id', async (req, res) => {
+  try {
+    const { price } = req.body;
+    const room = await Room.findByIdAndUpdate(req.params.id, { price }, { new: true });
+    if (!room) {
+      return res.status(404).json({ message: 'Room not found' });
+    }
+    res.status(200).json({ message: 'Price updated successfully', room });
+  } catch (error) {
+    res.status(500).json({ message: 'Error updating price' });
+  }
+});
+
+// --- Availability ---
+app.get('/api/hotel/availability', async (req, res) => {
+  try {
+    const { hotelName } = req.query;
+    const filter = hotelName ? { hotel: hotelName } : {};
+    const rooms = await Room.find(filter).sort({ createdAt: -1 });
+    res.status(200).json({ rooms });
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching availability' });
+  }
+});
+
+app.put('/api/hotel/availability/bulk', async (req, res) => {
+  try {
+    const { updates } = req.body;
+    if (!Array.isArray(updates) || updates.length === 0) {
+      return res.status(400).json({ message: 'No updates provided' });
+    }
+    const promises = updates.map(u => Room.findByIdAndUpdate(u.id, { ...u, id: undefined }, { new: true }));
+    await Promise.all(promises);
+    res.status(200).json({ message: 'Bulk availability updated successfully' });
+  } catch (error) {
+    res.status(500).json({ message: 'Error updating availability' });
+  }
+});
+
+// --- Bookings ---
+app.get('/api/hotel/bookings', async (req, res) => {
+  try {
+    const { hotelName } = req.query;
+    const filter = hotelName ? { hotelName } : { hotelName: { $exists: true, $ne: '' } };
+    const bookings = await Booking.find(filter).sort({ bookingDate: -1 });
+    res.status(200).json({ bookings });
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching bookings' });
+  }
+});
+
+app.post('/api/hotel/bookings', async (req, res) => {
+  try {
+    const payload = {
+      ...req.body,
+      userId: req.user.userId,
+      status: req.body.status || 'pending',
+      bookingId: `HBK-${Date.now().toString().slice(-8)}`,
+      timeline: [{ status: req.body.status || 'pending', date: new Date(), note: 'Booking created' }]
+    };
+    const booking = new Booking(payload);
+    await booking.save();
+    await Notification.create({
+      userId: req.user.userId,
+      type: 'booking',
+      title: 'New Booking',
+      message: `New booking ${payload.bookingId} for ${payload.guestName || 'guest'} has been created.`,
+      relatedId: booking._id,
+      read: false
+    });
+    res.status(201).json({ message: 'Booking created successfully', booking });
+  } catch (error) {
+    console.error('Error creating booking:', error);
+    res.status(500).json({ message: 'Error creating booking' });
+  }
+});
+
+app.put('/api/hotel/bookings/:id', async (req, res) => {
+  try {
+    const updates = pickUpdates(req.body, ['guestName', 'guestEmail', 'guestPhone', 'roomType', 'rooms', 'guests', 'checkInDate', 'checkOutDate', 'amount', 'paidAmount', 'status', 'paymentStatus', 'notes']);
+    if (updates.status) {
+      updates.$push = { timeline: { status: updates.status, date: new Date(), note: 'Status updated by hotel partner' } };
+    }
+    const booking = await Booking.findByIdAndUpdate(req.params.id, updates, { new: true });
+    if (!booking) {
+      return res.status(404).json({ message: 'Booking not found' });
+    }
+    if (updates.status === 'checked_in') {
+      await Notification.create({
+        userId: req.user.userId,
+        type: 'booking',
+        title: 'Guest Checked In',
+        message: `${booking.guestName || 'Guest'} has checked in (Room: ${booking.roomType || 'N/A'}).`,
+        relatedId: booking._id,
+        read: false
+      });
+    }
+    if (updates.status === 'checked_out') {
+      await Notification.create({
+        userId: req.user.userId,
+        type: 'payment',
+        title: 'Guest Checked Out',
+        message: `${booking.guestName || 'Guest'} has checked out. Total: ₹${booking.amount || 0}, Paid: ₹${booking.paidAmount || 0}.`,
+        relatedId: booking._id,
+        read: false
+      });
+    }
+    res.status(200).json({ message: 'Booking updated', booking });
+  } catch (error) {
+    res.status(500).json({ message: 'Error updating booking' });
+  }
+});
+
+app.delete('/api/hotel/bookings/:id', async (req, res) => {
+  try {
+    await Booking.findByIdAndDelete(req.params.id);
+    res.status(200).json({ message: 'Booking deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: 'Error deleting booking' });
+  }
+});
+
+app.put('/api/hotel/bookings/:id/pay', async (req, res) => {
+  try {
+    const { amount } = req.body;
+    const booking = await Booking.findById(req.params.id);
+    if (!booking) {
+      return res.status(404).json({ message: 'Booking not found' });
+    }
+    const paymentAmount = Math.min(amount || 0, booking.amount - (booking.paidAmount || 0));
+    booking.paidAmount = (booking.paidAmount || 0) + paymentAmount;
+    if (booking.paidAmount >= booking.amount) {
+      booking.paymentStatus = 'paid';
+    } else if (booking.paidAmount > 0) {
+      booking.paymentStatus = 'partial';
+    }
+    booking.timeline.push({ status: 'payment', date: new Date(), note: `Payment of ₹${paymentAmount} recorded` });
+    await booking.save();
+    await Notification.create({
+      userId: req.user.userId,
+      type: 'payment',
+      title: 'Payment Recorded',
+      message: `Payment of ₹${paymentAmount} recorded for ${booking.guestName || 'guest'} (${booking.bookingId}).`,
+      relatedId: booking._id,
+      read: false
+    });
+    res.status(200).json({ message: 'Payment recorded', booking });
+  } catch (error) {
+    res.status(500).json({ message: 'Error recording payment' });
+  }
+});
+
+// --- Guests ---
+app.get('/api/hotel/guests', async (req, res) => {
+  try {
+    const { hotelName } = req.query;
+    const filter = hotelName ? { hotelName } : { hotelName: { $exists: true, $ne: '' } };
+    const bookings = await Booking.find(filter);
+    const guestMap = {};
+    bookings.forEach(b => {
+      const key = b.guestEmail || b.guestPhone || b.guestName;
+      if (!key) return;
+      if (!guestMap[key]) {
+        guestMap[key] = {
+          _id: b._id,
+          name: b.guestName || '',
+          email: b.guestEmail || '',
+          phone: b.guestPhone || '',
+          totalStays: 0,
+          totalSpent: 0,
+          lastStay: new Date()
+        };
+      }
+      guestMap[key].totalStays += 1;
+      guestMap[key].totalSpent += (b.paidAmount || 0);
+      if (b.bookingDate && (new Date(b.bookingDate) > new Date(guestMap[key].lastStay))) {
+        guestMap[key].lastStay = b.bookingDate;
+      }
+    });
+    const guests = Object.values(guestMap).sort((a, b) => b.totalSpent - a.totalSpent);
+    res.status(200).json({ guests });
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching guests' });
+  }
+});
+
+// --- Reviews ---
+app.get('/api/hotel/reviews', async (req, res) => {
+  try {
+    const { hotelName, packageId, operatorId } = req.query;
+    const filter = {};
+    if (packageId) filter.packageId = packageId;
+    if (operatorId) filter.$or = [{ operatorId }, { customerId: req.user.userId }];
+    const reviews = await Review.find(filter)
+      .populate('packageId', 'name destination image')
+      .sort({ date: -1 });
+    res.status(200).json({ reviews });
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching reviews' });
+  }
+});
+
+app.put('/api/hotel/reviews/:id/respond', async (req, res) => {
+  try {
+    const { response } = req.body;
+    const review = await Review.findByIdAndUpdate(
+      req.params.id,
+      { 'response.text': response, 'response.date': new Date() },
+      { new: true }
+    );
+    if (!review) {
+      return res.status(404).json({ message: 'Review not found' });
+    }
+    res.status(200).json({ message: 'Response submitted', review });
+  } catch (error) {
+    res.status(500).json({ message: 'Error responding to review' });
+  }
+});
+
+app.put('/api/hotel/reviews/:id/status', async (req, res) => {
+  try {
+    const { status } = req.body;
+    const review = await Review.findByIdAndUpdate(req.params.id, { status }, { new: true });
+    if (!review) {
+      return res.status(404).json({ message: 'Review not found' });
+    }
+    res.status(200).json({ message: 'Review status updated', review });
+  } catch (error) {
+    res.status(500).json({ message: 'Error updating review status' });
+  }
+});
+
+app.delete('/api/hotel/reviews/:id', async (req, res) => {
+  try {
+    await Review.findByIdAndDelete(req.params.id);
+    res.status(200).json({ message: 'Review deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ message: 'Error deleting review' });
+  }
+});
+
+// --- Revenue ---
+app.get('/api/hotel/revenue', async (req, res) => {
+  try {
+    const range = req.query.range || 'month';
+    const since = rangeStart(range);
+    const { hotelName } = req.query;
+    const filter = hotelName ? { hotelName } : { hotelName: { $exists: true, $ne: '' } };
+    const rangeFilter = { ...filter, bookingDate: { $gte: since } };
+
+    const totalBookings = await Booking.countDocuments(filter);
+    const revenueBookings = await Booking.find({ ...filter, paymentStatus: 'paid' });
+    const totalRevenue = revenueBookings.reduce((sum, b) => sum + (b.amount || 0), 0);
+    const rangeBookings = await Booking.find({ ...filter, paymentStatus: 'paid', bookingDate: { $gte: since } });
+    const rangeRevenue = rangeBookings.reduce((sum, b) => sum + (b.amount || 0), 0);
+
+    const monthlyRevenue = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date();
+      d.setMonth(d.getMonth() - i, 1);
+      d.setHours(0, 0, 0, 0);
+      const end = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+      const monthBookings = await Booking.find({ ...filter, paymentStatus: 'paid', bookingDate: { $gte: d, $lte: end } });
+      monthlyRevenue.push(monthBookings.reduce((sum, b) => sum + (b.amount || 0), 0));
+    }
+
+    res.status(200).json({
+      totalRevenue,
+      rangeRevenue,
+      totalBookings,
+      monthlyRevenue
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching revenue data' });
+  }
+});
+
+// --- Notifications ---
+app.get('/api/hotel/notifications', async (req, res) => {
+  try {
+    const notifications = await Notification.find({ userId: req.user.userId })
+      .sort({ createdAt: -1 })
+      .limit(50);
+    const unreadCount = await Notification.countDocuments({ userId: req.user.userId, read: false });
+    res.status(200).json({ notifications, unreadCount });
+  } catch (error) {
+    res.status(500).json({ message: 'Error fetching notifications' });
+  }
+});
+
+app.put('/api/hotel/notifications/read-all', async (req, res) => {
+  try {
+    await Notification.updateMany(
+      { userId: req.user.userId, read: false },
+      { read: true }
+    );
+    res.status(200).json({ message: 'All notifications marked as read' });
+  } catch (error) {
+    res.status(500).json({ message: 'Error updating notifications' });
+  }
+});
+
+app.put('/api/hotel/notifications/:id/read', async (req, res) => {
+  try {
+    await Notification.findOneAndUpdate(
+      { _id: req.params.id, userId: req.user.userId },
+      { read: true }
+    );
+    res.status(200).json({ message: 'Notification marked as read' });
+  } catch (error) {
+    res.status(500).json({ message: 'Error updating notification' });
+  }
+});
+
+app.delete('/api/hotel/notifications/:id', async (req, res) => {
+  try {
+    await Notification.findOneAndDelete({ _id: req.params.id, userId: req.user.userId });
+    res.status(200).json({ message: 'Notification deleted' });
+  } catch (error) {
+    res.status(500).json({ message: 'Error deleting notification' });
+  }
+});
+
+// --- Analytics ---
+app.get('/api/hotel/analytics', async (req, res) => {
+  try {
+    const range = req.query.range || 'month';
+    const since = rangeStart(range);
+    const { hotelName, starRating } = req.query;
+
+    const user = await User.findById(req.user.userId);
+    const profile = await HotelProfile.findOne({ userId: req.user.userId }).catch(() => null);
+    const hName = hotelName || profile?.hotelName || user?.email || '';
+
+    const roomFilter = hName ? { hotel: hName } : {};
+    const rooms = await Room.find(roomFilter);
+    const totalRooms = rooms.reduce((sum, r) => sum + (r.total || 0), 0);
+    const availableRooms = rooms.reduce((sum, r) => sum + (r.available || 0), 0);
+    const bookedRooms = rooms.reduce((sum, r) => sum + (r.booked || 0), 0);
+    const occupancyRate = totalRooms > 0 ? Math.round((bookedRooms / totalRooms) * 100) : 0;
+
+    const bookingFilter = hName ? { hotelName: hName } : { hotelName: { $exists: true, $ne: '' } };
+    const allBookings = await Booking.find(bookingFilter);
+
+    const paidBookings = allBookings.filter(b => b.paymentStatus === 'paid');
+    const totalRevenue = paidBookings.reduce((sum, b) => sum + (b.amount || 0), 0);
+    const rangeBookings = allBookings.filter(b => new Date(b.bookingDate) >= since);
+    const rangeRevenue = rangeBookings.filter(b => b.paymentStatus === 'paid').reduce((sum, b) => sum + (b.amount || 0), 0);
+
+    const bookingStatus = {};
+    allBookings.forEach(b => {
+      bookingStatus[b.status] = (bookingStatus[b.status] || 0) + 1;
+    });
+
+    const paymentBreakdown = {};
+    allBookings.forEach(b => {
+      paymentBreakdown[b.paymentStatus] = (paymentBreakdown[b.paymentStatus] || 0) + 1;
+    });
+
+    const topRoomsMap = {};
+    allBookings.forEach(b => {
+      const key = b.roomType || 'Unknown';
+      if (!topRoomsMap[key]) topRoomsMap[key] = { name: key, revenue: 0 };
+      topRoomsMap[key].revenue += (b.paidAmount || 0);
+    });
+    const topRooms = Object.values(topRoomsMap).sort((a, b) => b.revenue - a.revenue).slice(0, 5);
+
+    const roomStatus = { available: 0, occupied: 0, reserved: 0, maintenance: 0 };
+    rooms.forEach(r => {
+      roomStatus.available += (r.available || 0);
+      roomStatus.occupied += (r.booked || 0);
+      roomStatus.maintenance += r.status === 'inactive' ? (r.total || 0) : 0;
+      roomStatus.reserved = 0;
+    });
+
+    const today = new Date().toISOString().split('T')[0];
+    const todayCheckIns = allBookings.filter(b => {
+      const ci = b.checkInDate ? new Date(b.checkInDate).toISOString().split('T')[0] : null;
+      return ci === today;
+    });
+    const todayCheckOuts = allBookings.filter(b => {
+      const co = b.checkOutDate ? new Date(b.checkOutDate).toISOString().split('T')[0] : null;
+      return co === today;
+    });
+
+    const totalBookings = allBookings.length;
+    const pendingPayments = allBookings
+      .filter(b => b.paymentStatus === 'partial' || b.paymentStatus === 'pending')
+      .reduce((sum, b) => sum + ((b.amount || 0) - (b.paidAmount || 0)), 0);
+
+    const currentlyCheckedIn = allBookings.filter(b => b.status === 'checked_in').length;
+
+    const operatorReviews = await Review.find({ operatorId: req.user.userId });
+    const recentReviews = operatorReviews.slice(0, 5).map(r => ({
+      _id: r._id,
+      customer: r.customer,
+      rating: r.rating,
+      comment: r.comment,
+      date: r.date
+    }));
+
+    const recentBookings = allBookings
+      .sort((a, b) => new Date(b.bookingDate) - new Date(a.bookingDate))
+      .slice(0, 6)
+      .map(b => ({
+        _id: b._id,
+        guestName: b.guestName,
+        roomType: b.roomType,
+        checkInDate: b.checkInDate,
+        checkOutDate: b.checkOutDate,
+        amount: b.amount,
+        paymentStatus: b.paymentStatus,
+        status: b.status
+      }));
+
+    const revenueTrend = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const dayStart = new Date(d.setHours(0, 0, 0, 0));
+      const dayEnd = new Date(d.setDate(d.getDate() + 1));
+      const dayBookings = paidBookings.filter(b => new Date(b.bookingDate) >= dayStart && new Date(b.bookingDate) < dayEnd);
+      const revenue = dayBookings.reduce((sum, b) => sum + (b.amount || 0), 0);
+      revenueTrend.push({
+        label: d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }),
+        revenue
+      });
+    }
+
+    const alerts = {
+      lowAvailability: totalRooms > 0 && availableRooms < totalRooms * 0.2
+    };
+
+    res.status(200).json({
+      totalRooms,
+      availableRooms,
+      bookedRooms,
+      occupancyRate,
+      totalRevenue,
+      rangeRevenue,
+      revenueTrend,
+      bookingStatus: {
+        confirmed: bookingStatus.confirmed || 0,
+        checked_in: bookingStatus.checked_in || 0,
+        pending: bookingStatus.pending || 0,
+        checked_out: bookingStatus.checked_out || 0,
+        cancelled: bookingStatus.cancelled || 0
+      },
+      paymentBreakdown: {
+        paid: paymentBreakdown.paid || 0,
+        partial: paymentBreakdown.partial || 0,
+        pending: paymentBreakdown.pending || 0,
+        refunded: paymentBreakdown.refunded || 0
+      },
+      topRooms,
+      roomStatus,
+      todayCheckIns: todayCheckIns.map(b => ({
+        _id: b._id,
+        guestName: b.guestName,
+        roomType: b.roomType,
+        guests: b.guests || 1,
+        amount: b.amount
+      })),
+      todayCheckOuts: todayCheckOuts.map(b => ({
+        _id: b._id,
+        guestName: b.guestName,
+        roomType: b.roomType,
+        guests: b.guests || 1,
+        paidAmount: b.paidAmount
+      })),
+      totalBookings,
+      pendingPayments,
+      currentlyCheckedIn,
+      recentBookings,
+      recentReviews,
+      alerts
+    });
+  } catch (error) {
+    console.error('Error fetching hotel analytics:', error);
     res.status(500).json({ message: 'Error fetching analytics' });
   }
 });
