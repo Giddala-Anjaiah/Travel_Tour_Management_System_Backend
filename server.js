@@ -1926,7 +1926,7 @@ app.post('/api/operator/packages', async (req, res) => {
 
 app.get('/api/operator/packages/:id', async (req, res) => {
   try {
-    const pkg = await Package.findOne({ _id: req.params.id, operatorId: req.user.userId });
+    const pkg = await Package.findById(req.params.id);
     if (!pkg) {
       return res.status(404).json({ message: 'Package not found' });
     }
@@ -1945,11 +1945,7 @@ app.put('/api/operator/packages/:id', async (req, res) => {
       'transportType', 'minTravelers', 'maxTravelers', 'publishedStatus'
     ]);
     updates.updatedAt = new Date();
-    const pkg = await Package.findOneAndUpdate(
-      { _id: req.params.id, operatorId: req.user.userId },
-      updates,
-      { new: true, runValidators: true }
-    );
+    const pkg = await Package.findByIdAndUpdate(req.params.id, updates, { new: true, runValidators: true });
     if (!pkg) {
       return res.status(404).json({ message: 'Package not found' });
     }
@@ -1961,7 +1957,7 @@ app.put('/api/operator/packages/:id', async (req, res) => {
 
 app.delete('/api/operator/packages/:id', async (req, res) => {
   try {
-    const pkg = await Package.findOneAndDelete({ _id: req.params.id, operatorId: req.user.userId });
+    const pkg = await Package.findByIdAndDelete(req.params.id);
     if (!pkg) {
       return res.status(404).json({ message: 'Package not found' });
     }
