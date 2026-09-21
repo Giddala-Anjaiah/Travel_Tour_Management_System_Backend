@@ -1219,20 +1219,24 @@ app.get('/api/admin/packages', async (req, res) => {
 
 app.post('/api/admin/packages', async (req, res) => {
   try {
-    const newPackage = new Package({ ...req.body, operatorId: req.body.operatorId || req.user.userId });
+     const newPackage = new Package({ ...req.body, operatorId: req.body.operatorId || req.user.userId });
     await newPackage.save();
+    console.log('Package created with _id:', newPackage._id);
     res.status(201).json({ message: 'Package created successfully', package: newPackage });
   } catch (error) {
-    res.status(500).json({ message: 'Error creating package' });
+    console.error('Error creating package:', error);
+    res.status(500).json({ message: 'Error creating package', error: error.message });
   }
 });
 
 app.put('/api/admin/packages/:id', async (req, res) => {
   try {
     const updates = pickUpdates(req.body, ['name', 'destination', 'duration', 'price', 'rating', 'bookings', 'status', 'description', 'inclusions', 'image']);
+    console.log('PUT package id:', req.params.id, 'updates:', updates);
     const pkg = await Package.findByIdAndUpdate(req.params.id, updates, { new: true, runValidators: true });
     if (!pkg) {
-      return res.status(404).json({ message: 'Package not found' });
+      console.error('Package not found, id:', req.params.id);
+      return res.status(404).json({ message: 'Package not found', id: req.params.id });
     }
     res.status(200).json({ message: 'Package updated successfully', package: pkg });
   } catch (error) {
