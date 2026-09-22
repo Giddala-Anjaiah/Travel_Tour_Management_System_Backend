@@ -2342,6 +2342,13 @@ app.put('/api/operator/bookings/:id', async (req, res) => {
     }
     
     await booking.save();
+    if (updates.status && updates.status !== 'pending' && booking.email) {
+      await sendNotificationEmail(
+        booking.email,
+        'Booking Status Update',
+        `Your booking <strong>${booking.bookingId || booking._id}</strong> status has been updated to "${updates.status}" by the tour operator.`
+      ).catch(err => console.error('Operator booking email failed:', err.message));
+    }
     res.status(200).json({ message: 'Booking updated successfully', booking });
   } catch (error) {
     res.status(500).json({ message: 'Error updating booking' });
@@ -2418,6 +2425,16 @@ app.put('/api/operator/reviews/:id/respond', async (req, res) => {
     );
     if (!review) {
       return res.status(404).json({ message: 'Review not found' });
+    }
+    if (review.customerId) {
+      const cust = await User.findById(review.customerId).select('email fullName');
+      if (cust?.email) {
+        await sendNotificationEmail(
+          cust.email,
+          'New Response to Your Review',
+          `The tour operator has responded to your review for "${review.package}". Check your notifications for details.`
+        ).catch(() => {});
+      }
     }
     res.status(200).json({ message: 'Response added successfully', review });
   } catch (error) {
@@ -3550,7 +3567,7 @@ app.put('/api/hotel/bookings/:id', async (req, res) => {
     if (!booking) {
       return res.status(404).json({ message: 'Booking not found' });
     }
-    if (updates.status === 'checked_in') {
+     if (updates.status === 'checked_in') {
       await Notification.create({
         userId: req.user.userId,
         type: 'booking',
@@ -3559,6 +3576,13 @@ app.put('/api/hotel/bookings/:id', async (req, res) => {
         relatedId: booking._id,
         read: false
       });
+      if (booking.guestEmail) {
+        await sendNotificationEmail(
+          booking.guestEmail,
+          'Check-in Confirmation',
+          `Hello ${booking.guestName || 'Guest'}, your check-in at ${booking.hotelName || 'our hotel'} is confirmed. Room: ${booking.roomType || 'N/A'}. Enjoy your stay!`
+        ).catch(() => {});
+      }
     }
     if (updates.status === 'checked_out') {
       await Notification.create({
@@ -3569,6 +3593,13 @@ app.put('/api/hotel/bookings/:id', async (req, res) => {
         relatedId: booking._id,
         read: false
       });
+      if (booking.guestEmail) {
+        await sendNotificationEmail(
+          booking.guestEmail,
+          'Check-out Confirmation',
+          `Thank you for staying at ${booking.hotelName || 'our hotel'}. Total: ₹${booking.amount || 0}, Paid: ₹${booking.paidAmount || 0}.`
+        ).catch(() => {});
+      }
     }
     res.status(200).json({ message: 'Booking updated', booking });
   } catch (error) {
@@ -3676,6 +3707,16 @@ app.put('/api/hotel/reviews/:id/respond', async (req, res) => {
     if (!review) {
       return res.status(404).json({ message: 'Review not found' });
     }
+    if (review.customerId) {
+      const cust = await User.findById(review.customerId).select('email');
+      if (cust?.email) {
+        await sendNotificationEmail(
+          cust.email,
+          'New Response to Your Review',
+          `The hotel partner has responded to your review for "${review.package}". Check your notifications for details.`
+        ).catch(() => {});
+      }
+    }
     res.status(200).json({ message: 'Response submitted', review });
   } catch (error) {
     res.status(500).json({ message: 'Error responding to review' });
@@ -3688,6 +3729,16 @@ app.put('/api/hotel/reviews/:id/status', async (req, res) => {
     const review = await Review.findByIdAndUpdate(req.params.id, { status }, { new: true });
     if (!review) {
       return res.status(404).json({ message: 'Review not found' });
+    }
+    if (review.customerId && (status === 'approved' || status === 'rejected')) {
+      const cust = await User.findById(review.customerId).select('email');
+      if (cust?.email) {
+        await sendNotificationEmail(
+          cust.email,
+          `Review ${status === 'approved' ? 'Approved' : 'Rejected'}`,
+          `Your review for "${review.package}" has been ${status === 'approved' ? 'approved' : 'rejected'} by the hotel partner.`
+        ).catch(() => {});
+      }
     }
     res.status(200).json({ message: 'Review status updated', review });
   } catch (error) {
