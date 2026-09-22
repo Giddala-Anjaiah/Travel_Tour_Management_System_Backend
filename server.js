@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import bcrypt from 'bcryptjs';
+import PDFDocument from 'pdfkit';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 
@@ -1067,6 +1068,70 @@ async function sendNotificationEmail(to, title, message) {
     console.error('Email notification failed:', err.message);
     return false;
   }
+}
+
+async function sendEmailWithAttachment(to, subject, htmlContent, attachments) {
+  const brevoKey = process.env.BREVO_API_KEY;
+  if (!brevoKey) {
+    throw new Error('BREVO_API_KEY not configured');
+  }
+  const senderEmail = process.env.BREVO_SENDER_EMAIL || 'anjaiahgiddala@gmail.com';
+  const senderName = process.env.BREVO_SENDER_NAME || 'Teja.com';
+  const body = {
+    sender: { email: senderEmail, name: senderName },
+    to: [{ email: to }],
+    subject,
+    htmlContent,
+  };
+  if (attachments && attachments.length) {
+    body.attachments = attachments.map(att => ({
+      name: att.name,
+      content: att.content.toString('base64'),
+    }));
+  }
+  const resp = await fetch('https://api.brevo.com/v3/smtp/email', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'api-key': brevoKey,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!resp.ok) {
+    const txt = await resp.text();
+    throw new Error(`Brevo API error ${resp.status}: ${txt}`);
+  }
+  return resp.json();
+}
+
+function generateInvoicePDF(invoice, booking) {
+  return new Promise((resolve, reject) => {
+    try {
+      const doc = new PDFDocument({ margin: 50 });
+      const chunks = [];
+      doc.on('data', (chunk) => chunks.push(chunk));
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+      doc.on('error', reject);
+      doc.fontSize(20).text('INVOICE', { align: 'center' });
+      doc.moveDown();
+      doc.fontSize(12);
+      doc.text(`Invoice No: ${invoice.invoiceNo || 'N/A'}`);
+      doc.text(`Date: ${new Date().toLocaleDateString('en-IN')}`);
+      doc.moveDown();
+      doc.text(`Customer: ${booking.customer || 'N/A'}`);
+      doc.text(`Email: ${invoice.email || 'N/A'}`);
+      doc.moveDown();
+      doc.text(`Package: ${invoice.package || 'N/A'}`);
+      doc.text(`Amount: ₹${invoice.amount || 0}`);
+      doc.text(`Status: ${invoice.status || 'paid'}`);
+      doc.text(`Due Date: ${invoice.dueDate ? new Date(invoice.dueDate).toLocaleDateString('en-IN') : 'N/A'}`);
+      doc.moveDown();
+      doc.text('Thank you for your booking!');
+      doc.end();
+    } catch (err) {
+      reject(err);
+    }
+  });
 }
 
 // Forgot Password Route — sends OTP to user email
@@ -2764,8 +2829,8 @@ app.put('/api/customer/bookings/:id/pay', async (req, res) => {
     booking.timeline.push({ status: booking.paymentStatus, date: new Date(), note: `Payment of ₹${paymentAmount} received` });
     await booking.save();
     if (booking.paymentStatus === 'paid') {
-      await createPaidInvoice(booking);
-       await Notification.create({
+      const invoice = await createPaidInvoice(booking);
+      await Notification.create({
           userId: req.user.userId,
           type: 'payment',
           title: 'Payment Confirmed',
@@ -2773,13 +2838,15 @@ app.put('/api/customer/bookings/:id/pay', async (req, res) => {
           relatedId: booking._id,
           read: false
         });
-        if (req.user.email) {
-          await sendNotificationEmail(
-            req.user.email,
-            'Payment Confirmation',
-            `Payment of ₹${paymentAmount} received. Your booking <strong>${booking.bookingId}</strong> is now fully confirmed.`
-          );
-        }
+      if (req.user.email) {
+        const pdfBuffer = await generateInvoicePDF(invoice, booking);
+        await sendEmailWithAttachment(
+          req.user.email,
+          'Payment Confirmation & Invoice',
+          `Payment of ₹${paymentAmount} received. Your booking <strong>${booking.bookingId}</strong> is now fully confirmed. Invoice: ${invoice.invoiceNo || 'N/A'}.`,
+          [{ name: `invoice_${invoice.invoiceNo || 'invoice'}.pdf`, content: pdfBuffer }]
+        ).catch(err => console.error('Invoice email failed:', err.message));
+      }
     } else if (booking.paymentStatus === 'partial') {
       await Notification.create({
         userId: req.user.userId,
