@@ -1048,6 +1048,27 @@ async function sendEmailViaBrevo(to, subject, htmlContent) {
   return resp.json();
 }
 
+async function sendNotificationEmail(to, title, message) {
+  if (!to) return false;
+  const htmlContent = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
+      <div style="background: #3b82f6; color: white; padding: 15px; border-radius: 6px; margin-bottom: 20px;">
+        <h2 style="margin: 0; font-size: 20px;">TravelTour Notifications</h2>
+      </div>
+      <h3 style="margin-top: 0; color: #1e293b;">${title}</h3>
+      <p style="color: #333; line-height: 1.6;">${message}</p>
+      <p style="color: #64748b; font-size: 12px; margin-top: 20px;">This is an automated message. Please do not reply.</p>
+    </div>
+  `;
+  try {
+    await sendEmailViaBrevo(to, title, htmlContent);
+    return true;
+  } catch (err) {
+    console.error('Email notification failed:', err.message);
+    return false;
+  }
+}
+
 // Forgot Password Route — sends OTP to user email
 app.post('/api/forgot-password', async (req, res) => {
   try {
@@ -1803,14 +1824,14 @@ app.get('/api/admin/notifications', async (req, res) => {
 
 app.post('/api/admin/notifications', async (req, res) => {
   try {
-    const { title, message, type, role: roleQuery, userIds } = req.body;
+    const { title, message, type, role: roleQuery, userIds, alsoEmail } = req.body;
     let users;
     if (roleQuery === 'all') {
-      users = await User.find({}).select('_id');
+      users = await User.find({});
     } else if (roleQuery) {
-      users = await User.find({ role: roleQuery }).select('_id');
+      users = await User.find({ role: roleQuery });
     } else if (userIds && userIds.length) {
-      users = await User.find({ _id: { $in: userIds } }).select('_id');
+      users = await User.find({ _id: { $in: userIds } });
     } else {
       return res.status(400).json({ message: 'role or userIds required' });
     }
@@ -1824,7 +1845,18 @@ app.post('/api/admin/notifications', async (req, res) => {
       }));
     }
     await Notification.insertMany(notifications);
-    res.status(201).json({ count: notifications.length });
+    if (alsoEmail) {
+      let emailSuccess = 0;
+      for (const u of users) {
+        if (u.email) {
+          const ok = await sendNotificationEmail(u.email, title, message);
+          if (ok) emailSuccess++;
+        }
+      }
+      res.status(201).json({ count: notifications.length, emailsSent: emailSuccess });
+    } else {
+      res.status(201).json({ count: notifications.length });
+    }
   } catch (error) {
     res.status(500).json({ message: 'Error creating notifications' });
   }
@@ -1839,6 +1871,41 @@ app.delete('/api/admin/notifications/:id', async (req, res) => {
     res.status(200).json({ message: 'Notification deleted' });
   } catch (error) {
     res.status(500).json({ message: 'Error deleting notification' });
+  }
+});
+
+app.post('/api/admin/send-email', async (req, res) => {
+  try {
+    const { subject, message, role: roleQuery, userIds, email } = req.body;
+    let users = [];
+    if (roleQuery) {
+      users = await User.find({ role: roleQuery }).select('email fullName');
+    } else if (userIds && userIds.length) {
+      users = await User.find({ _id: { $in: userIds } }).select('email fullName');
+    } else if (email) {
+      users = [{ email, fullName: 'Recipient' }];
+    } else {
+      return res.status(400).json({ message: 'role, userIds, or email required' });
+    }
+    let success = 0;
+    let fail = 0;
+    for (const u of users) {
+      if (u.email) {
+        const ok = await sendNotificationEmail(u.email, subject, message);
+        if (ok) success++; else fail++;
+      } else {
+        fail++;
+      }
+    }
+    await Notification.create(users.map(u => ({
+      userId: u._id || users[0]._id,
+      type: 'system',
+      title: subject,
+      message: message,
+    })).filter(n => n.userId));
+    res.status(200).json({ message: 'Email sent', success, fail });
+  } catch (error) {
+    res.status(500).json({ message: 'Error sending email' });
   }
 });
 
@@ -2612,6 +2679,23 @@ app.post('/api/customer/bookings', async (req, res) => {
       relatedId: newBooking._id,
       read: false
     });
+    if (req.user.email) {
+      await sendNotificationEmail(
+        req.user.email,
+        'Booking Confirmation',
+        `Your booking <strong>${payload.bookingId}</strong> for ${payload.package || 'hotel'} has been received and is pending confirmation. Amount: ₹${payload.amount || 0}.`
+      );
+    }
+    if (payload.operatorId) {
+      const opUser = await User.findById(payload.operatorId).select('email');
+      if (opUser?.email) {
+        await sendNotificationEmail(
+          opUser.email,
+          'New Booking Received',
+          `A new booking <strong>${payload.bookingId}</strong> has been placed for your package "${payload.package}". Amount: ₹${payload.amount || 0}.`
+        );
+      }
+    }
     res.status(201).json({ message: 'Booking created successfully', booking: newBooking });
   } catch (error) {
     console.error('Error creating booking:', error);
@@ -2681,14 +2765,21 @@ app.put('/api/customer/bookings/:id/pay', async (req, res) => {
     await booking.save();
     if (booking.paymentStatus === 'paid') {
       await createPaidInvoice(booking);
-      await Notification.create({
-        userId: req.user.userId,
-        type: 'payment',
-        title: 'Payment Confirmed',
-        message: `Payment of ₹${paymentAmount} received. Your booking (${booking.bookingId}) is now fully confirmed.`,
-        relatedId: booking._id,
-        read: false
-      });
+       await Notification.create({
+          userId: req.user.userId,
+          type: 'payment',
+          title: 'Payment Confirmed',
+          message: `Payment of ₹${paymentAmount} received. Your booking (${booking.bookingId}) is now fully confirmed.`,
+          relatedId: booking._id,
+          read: false
+        });
+        if (req.user.email) {
+          await sendNotificationEmail(
+            req.user.email,
+            'Payment Confirmation',
+            `Payment of ₹${paymentAmount} received. Your booking <strong>${booking.bookingId}</strong> is now fully confirmed.`
+          );
+        }
     } else if (booking.paymentStatus === 'partial') {
       await Notification.create({
         userId: req.user.userId,
@@ -3300,6 +3391,13 @@ app.post('/api/hotel/bookings', async (req, res) => {
       relatedId: booking._id,
       read: false
     });
+    if (payload.guestEmail) {
+      await sendNotificationEmail(
+        payload.guestEmail,
+        'Booking Confirmation',
+        `Your hotel booking <strong>${payload.bookingId}</strong> has been created. Check-in: ${payload.checkInDate || 'TBD'}. Amount: ₹${payload.amount || 0}.`
+      );
+    }
     res.status(201).json({ message: 'Booking created successfully', booking });
   } catch (error) {
     console.error('Error creating booking:', error);
