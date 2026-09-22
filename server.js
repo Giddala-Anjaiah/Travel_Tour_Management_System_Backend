@@ -1146,7 +1146,25 @@ app.post('/api/forgot-password', async (req, res) => {
     const otp = crypto.randomInt(100000, 999999).toString();
     otpStore.set(email, { otp, expiresAt: Date.now() + 5 * 60 * 1000 });
 
-    const html = `<p>Your Travel Tour password reset OTP is <strong>${otp}</strong>. It expires in 5 minutes.</p>`;
+    const html = `
+    <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 500px; margin: 0 auto; padding: 20px; background: #f8fafc;">
+      <div style="background: linear-gradient(135deg, #3b82f6, #1d4ed8); padding: 20px; border-radius: 10px; text-align: center; color: white; margin-bottom: 5px;">
+        <h1 style="margin: 0; font-size: 24px;">TravelTour</h1>
+        <p style="margin: 5px 0 0; font-size: 14px; opacity: 0.9;">Password Reset OTP</p>
+      </div>
+      <div style="background: white; padding: 30px; border-radius: 0 0 10px 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+        <h2 style="color: #1e293b; margin-top: 0; font-size: 20px;">Reset Your Password</h2>
+        <p style="color: #475569; line-height: 1.6; font-size: 15px;">Hello ${user.fullName || user.email},</p>
+        <p style="color: #475569; line-height: 1.6; font-size: 14px; margin-bottom: 25px;">Enter the OTP below to reset your password. This code will expire in <strong>5 minutes</strong>.</p>
+        <div style="background: #f1f5f9; border: 2px dashed #cbd5e1; border-radius: 8px; padding: 20px; text-align: center; margin: 25px 0;">
+          <span style="font-size: 36px; font-weight: 700; letter-spacing: 8px; color: #2563eb;">${otp}</span>
+        </div>
+        <p style="color: #94a3b8; font-size: 12px; text-align: center; margin-top: 25px;">This is an automated message. If you did not request this, please ignore.</p>
+      </div>
+      <div style="text-align: center; padding: 15px; color: #94a3b8; font-size: 12px;">
+        © ${new Date().getFullYear()} TravelTour. All rights reserved.
+      </div>
+    </div>`;
     const brevoKey = process.env.BREVO_API_KEY;
     let emailOk = false;
     if (brevoKey) {
