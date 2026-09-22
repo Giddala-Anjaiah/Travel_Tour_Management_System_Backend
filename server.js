@@ -2789,6 +2789,13 @@ app.put('/api/customer/bookings/:id/pay', async (req, res) => {
         relatedId: booking._id,
         read: false
       });
+      if (req.user.email) {
+        await sendNotificationEmail(
+          req.user.email,
+          'Partial Payment Received',
+          `Payment of ₹${paymentAmount} received for booking <strong>${booking.bookingId}</strong>. Remaining balance: ₹${booking.amount - booking.paidAmount}.`
+        );
+      }
     }
     res.status(200).json({ message: 'Payment processed', booking });
   } catch (error) {
