@@ -1516,7 +1516,16 @@ app.put('/api/admin/bookings/:id', async (req, res) => {
       return res.status(404).json({ message: 'Booking not found' });
     }
     if (booking.paymentStatus === 'paid') {
-      await createPaidInvoice(booking);
+      const invoice = await createPaidInvoice(booking);
+      if (booking.email) {
+        const pdfBuffer = await generateInvoicePDF(invoice, booking);
+        await sendEmailWithAttachment(
+          booking.email,
+          'Booking Confirmed & Invoice',
+          `Your booking <strong>${booking.bookingId}</strong> has been confirmed by the admin. Invoice: ${invoice.invoiceNo || 'N/A'}.`,
+          [{ name: `invoice_${invoice.invoiceNo || 'invoice'}.pdf`, content: pdfBuffer }]
+        ).catch(err => console.error('Admin invoice email failed:', err.message));
+      }
     }
     res.status(200).json({ message: 'Booking updated successfully', booking });
   } catch (error) {
@@ -1615,6 +1624,26 @@ app.put('/api/admin/reviews/:id', async (req, res) => {
       return res.status(404).json({ message: 'Review not found' });
     }
     await refreshPackageRating(review.package);
+    if (updates.status && (updates.status === 'approved' || updates.status === 'rejected')) {
+      await Notification.create({
+        userId: review.customerId,
+        type: 'review',
+        title: 'Review Status Updated',
+        message: `Your review for "${review.package}" has been ${updates.status} by admin.`,
+        relatedId: review._id,
+        read: false
+      });
+      if (review.customerId) {
+        const cust = await User.findById(review.customerId).select('email fullName');
+        if (cust?.email) {
+          await sendNotificationEmail(
+            cust.email,
+            `Review ${updates.status === 'approved' ? 'Approved' : 'Rejected'}`,
+            `Your review for "${review.package}" has been ${updates.status} by the admin. Thank you for your feedback!`
+          );
+        }
+      }
+    }
     res.status(200).json({ message: 'Review updated successfully', review });
   } catch (error) {
     res.status(500).json({ message: 'Error updating review' });
