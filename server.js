@@ -2783,7 +2783,7 @@ app.get('/api/customer/bookings/:id', async (req, res) => {
 
 app.put('/api/customer/bookings/:id', async (req, res) => {
   try {
-    const updates = pickUpdates(req.body, ['dates', 'travelers', 'phone']);
+    const updates = pickUpdates(req.body, ['dates', 'travelers', 'phone', 'status', 'paymentStatus']);
     if (req.body.status) {
       updates.$push = { timeline: { status: req.body.status, date: new Date(), note: 'Status updated by customer' } };
     }
@@ -2804,6 +2804,38 @@ app.put('/api/customer/bookings/:id', async (req, res) => {
         relatedId: booking._id,
         read: false
       });
+      if (req.user.email) {
+        if (req.body.status === 'cancelled') {
+          await sendNotificationEmail(
+            req.user.email,
+            'Booking Cancelled',
+            `Your booking <strong>${booking.bookingId}</strong> for ${booking.package || 'package'} has been cancelled. If a refund is applicable, it will be processed within 5-7 business days.`
+          );
+        } else {
+          await sendNotificationEmail(
+            req.user.email,
+            'Booking Status Updated',
+            `Your booking <strong>${booking.bookingId}</strong> status has been updated to "${req.body.status}".`
+          );
+        }
+      }
+    }
+    if (req.body.paymentStatus && (req.body.paymentStatus === 'refunded' || req.body.paymentStatus === 'failed')) {
+      await Notification.create({
+        userId: req.user.userId,
+        type: 'payment',
+        title: 'Payment Cancelled',
+        message: `Your payment for booking (${booking.bookingId}) has been ${req.body.paymentStatus}. A refund will be initiated if applicable.`,
+        relatedId: booking._id,
+        read: false
+      });
+      if (req.user.email) {
+        await sendNotificationEmail(
+          req.user.email,
+          'Payment Cancelled',
+          `Your payment for booking <strong>${booking.bookingId}</strong> has been ${req.body.paymentStatus}. A refund will be initiated if applicable.`
+        );
+      }
     }
     res.status(200).json({ message: 'Booking updated', booking });
   } catch (error) {
