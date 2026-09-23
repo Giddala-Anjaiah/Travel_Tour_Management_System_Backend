@@ -6,6 +6,8 @@ import bcrypt from 'bcryptjs';
 import PDFDocument from 'pdfkit';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
+import passport from 'passport';
+import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
 
 dotenv.config();
 
@@ -38,6 +40,7 @@ app.use(cors({
   credentials: true,
 }));
 app.use(express.json());
+app.use(passport.initialize());
 
 // MongoDB Connection
 mongoose.connect(process.env.MONGODB_URI)
@@ -926,6 +929,53 @@ async function refreshPackageRating(packageName) {
 
 // Log collection name for debugging
 console.log('User collection name:', User.collection.name);
+
+// --- Google OAuth ---
+passport.use(new GoogleStrategy(
+  {
+    clientID: process.env.GOOGLE_CLIENT_ID,
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+    callbackURL: '/api/auth/google/callback',
+  },
+  async (accessToken, refreshToken, profile, done) => {
+    try {
+      const email = profile.emails?.[0]?.value;
+      if (!email) return done(new Error('No email from Google'));
+      let user = await User.findOne({ email });
+      if (!user) {
+        user = new User({
+          fullName: profile.displayName || email.split('@')[0],
+          email,
+          phone: '',
+          password: crypto.randomBytes(32).toString('hex'),
+          role: 'customer',
+        });
+        await user.save();
+      }
+      return done(null, user);
+    } catch (err) {
+      return done(err);
+    }
+  }
+));
+
+app.get(
+  '/api/auth/google',
+  passport.authenticate('google', { scope: ['profile', 'email'], session: false })
+);
+
+app.get(
+  '/api/auth/google/callback',
+  passport.authenticate('google', { session: false, failureRedirect: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/login?error=oauth` }),
+  (req, res) => {
+    const token = jwt.sign(
+      { userId: req.user._id, email: req.user.email, role: req.user.role },
+      jwtSecret,
+      { expiresIn: '24h' }
+    );
+    res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:5173'}?token=${token}&role=${req.user.role}`);
+  }
+);
 
 // Routes
 
