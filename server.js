@@ -1103,16 +1103,7 @@ async function sendEmailViaBrevo(to, subject, htmlContent) {
 
 async function sendNotificationEmail(to, title, message) {
   if (!to) return false;
-  const htmlContent = `
-    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 8px;">
-      <div style="background: #3b82f6; color: white; padding: 15px; border-radius: 6px; margin-bottom: 20px;">
-        <h2 style="margin: 0; font-size: 20px;">TravelTour Notifications</h2>
-      </div>
-      <h3 style="margin-top: 0; color: #1e293b;">${title}</h3>
-      <p style="color: #333; line-height: 1.6;">${message}</p>
-      <p style="color: #64748b; font-size: 12px; margin-top: 20px;">This is an automated message. Please do not reply.</p>
-    </div>
-  `;
+  const htmlContent = cardEmailTemplate(title, message);
   try {
     await sendEmailViaBrevo(to, title, htmlContent);
     return true;
@@ -1120,6 +1111,29 @@ async function sendNotificationEmail(to, title, message) {
     console.error('Email notification failed:', err.message);
     return false;
   }
+}
+
+function cardEmailTemplate(title, message) {
+  return `
+    <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background: #f8fafc;">
+      <div style="background: linear-gradient(135deg, #3b82f6, #1d4ed8); padding: 20px; border-radius: 10px; text-align: center; color: white; margin-bottom: 5px;">
+        <h2 style="margin: 0; font-size: 20px;">TravelTour Notifications</h2>
+      </div>
+      <div style="background: white; padding: 30px; border-radius: 0 0 10px 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+        <h3 style="margin-top: 0; color: #1e293b; font-size: 18px;">${title}</h3>
+        <div style="color: #333; line-height: 1.6; font-size: 15px;">${message}</div>
+        <div style="color: #94a3b8; font-size: 12px; margin-top: 20px;">This is an automated message. Please do not reply.</div>
+      </div>
+      <div style="text-align: center; padding: 15px; color: #94a3b8; font-size: 12px;">
+        © ${new Date().getFullYear()} TravelTour. All rights reserved.
+      </div>
+    </div>
+  `;
+}
+
+async function sendCardEmailWithAttachment(to, subject, title, message, attachments) {
+  const cardHtml = cardEmailTemplate(title, message);
+  return sendEmailWithAttachment(to, subject, cardHtml, attachments);
 }
 
 async function sendEmailWithAttachment(to, subject, htmlContent, attachments) {
@@ -1585,13 +1599,14 @@ app.put('/api/admin/bookings/:id', async (req, res) => {
     if (!booking) {
       return res.status(404).json({ message: 'Booking not found' });
     }
-    if (booking.paymentStatus === 'paid') {
+     if (booking.paymentStatus === 'paid') {
       const invoice = await createPaidInvoice(booking);
       if (booking.email) {
         const pdfBuffer = await generateInvoicePDF(invoice, booking);
-        await sendEmailWithAttachment(
+        await sendCardEmailWithAttachment(
           booking.email,
           'Booking Confirmed & Invoice',
+          'Booking Confirmed!',
           `Your booking <strong>${booking.bookingId}</strong> has been confirmed by the admin. Invoice: ${invoice.invoiceNo || 'N/A'}.`,
           [{ name: `invoice_${invoice.invoiceNo || 'invoice'}.pdf`, content: pdfBuffer }]
         ).catch(err => console.error('Admin invoice email failed:', err.message));
@@ -2988,9 +3003,10 @@ app.put('/api/customer/bookings/:id/pay', async (req, res) => {
         });
       if (req.user.email) {
         const pdfBuffer = await generateInvoicePDF(invoice, booking);
-        await sendEmailWithAttachment(
+        await sendCardEmailWithAttachment(
           req.user.email,
           'Payment Confirmation & Invoice',
+          'Payment Confirmed!',
           `Payment of ₹${paymentAmount} received. Your booking <strong>${booking.bookingId}</strong> is now fully confirmed. Invoice: ${invoice.invoiceNo || 'N/A'}.`,
           [{ name: `invoice_${invoice.invoiceNo || 'invoice'}.pdf`, content: pdfBuffer }]
         ).catch(err => console.error('Invoice email failed:', err.message));
