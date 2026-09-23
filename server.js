@@ -943,12 +943,12 @@ passport.use(new GoogleStrategy(
     try {
       const email = profile.emails?.[0]?.value;
       if (!email) return done(new Error('No email from Google'));
-      let user = await User.findOne({ email });
+       let user = await User.findOne({ email });
       if (!user) {
         user = new User({
           fullName: profile.displayName || email.split('@')[0],
           email,
-          phone: '',
+          phone: '0000000000',
           password: crypto.randomBytes(32).toString('hex'),
           role: 'customer',
         });
