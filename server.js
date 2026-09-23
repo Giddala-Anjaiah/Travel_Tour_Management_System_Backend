@@ -975,7 +975,7 @@ app.get(
       jwtSecret,
       { expiresIn: '24h' }
     );
-    res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:5173'}?token=${token}&role=${req.user.role}`);
+    res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:5173'}/login?token=${token}&role=${req.user.role}`);
   }
 );
 
