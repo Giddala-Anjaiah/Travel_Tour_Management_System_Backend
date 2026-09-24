@@ -928,7 +928,7 @@ async function refreshPackageRating(packageName) {
   await Package.findOneAndUpdate({ name: packageName }, { rating: Number(avg.toFixed(1)) });
 }
 
-// Log collection name for debugging
+
 console.log('User collection name:', User.collection.name);
 
 // --- Google OAuth ---
