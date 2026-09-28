@@ -975,7 +975,18 @@ app.get(
       jwtSecret,
       { expiresIn: '24h' }
     );
-    res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:5173'}/login?token=${token}&role=${req.user.role}`);
+    // Prefer the origin the user actually came from (referer), fall back to configured FRONTEND_URL
+    const referer = req.get('referer') || ''
+    let frontend = process.env.FRONTEND_URL || 'http://localhost:5173'
+    try {
+      if (referer) {
+        const u = new URL(referer)
+        if (u.origin && !u.origin.includes('onrender.com') && !u.origin.includes('localhost:5000')) {
+          frontend = u.origin
+        }
+      }
+    } catch (_) { /* ignore */ }
+    res.redirect(`${frontend}/login?token=${token}&role=${req.user.role}`);
   }
 );
 
