@@ -2100,7 +2100,7 @@ app.post('/api/contact', async (req, res) => {
     if (!name || !email || !subject || !message) {
       return res.status(400).json({ message: 'All fields are required' });
     }
-    const adminEmail = process.env.ADMIN_EMAIL || 'tourmanager@gmail.com';
+    const adminEmail = process.env.ADMIN_EMAIL || 'anjaiahgiddala@gmail.com';
     const html = `
       <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px;border:1px solid #e5e7eb;border-radius:8px;">
         <h2 style="color:#1e3a5f;margin-bottom:8px;">New Contact Form Submission</h2>
